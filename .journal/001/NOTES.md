@@ -88,3 +88,12 @@ Imported the template's standard `.golangci.yml` with only the module prefix and
 Added the existing CI shape, reduced to the current Go project: checkout, mise setup, Go module/build caches, golangci-lint cache, and Moon CI. It pins `jdx/mise-action` v4.2.5 and mise 2026.8.8. Both `add_shims_to_path` and `export_path` are disabled so the workflow cannot accidentally rely on ambient managed tools; its execution boundary is `mise exec -- moon ci --summary minimal`.
 
 `mise exec -- moon run root:check` passed all format, lint, build, and test tasks. The exact CI command also passed: seven tasks completed, with one cached. Commit `cbee1a5` (`build: add Moon CI and linting`) was pushed to `origin/mvp`.
+
+## 2026-08-17 12:19 — Reusable Go CI prototype
+Extracted the CI implementation to `.github/workflows/go-ci.yml` with a `workflow_call` trigger. The reusable contract deliberately has no inputs or secrets: a caller provides the standard `mise.toml`, `mise.lock`, `moon.yml`, `.golangci.yml`, and Go module, and the workflow checks out and tests the caller repository. The repository-facing `.github/workflows/ci.yml` now contains only event filters, concurrency, read-only permissions, and a same-commit local call to `./.github/workflows/go-ci.yml`.
+
+For external consumers, the corresponding call will be `meigma/release/.github/workflows/go-ci.yml@<full-commit-sha>`; no branch reference should be documented as the default. GitHub's reusable-workflow execution retains the caller repository context, so the checkout in the shared workflow retrieves the caller rather than `meigma/release`.
+
+The prototype was tested on GitHub, not only parsed locally. A temporary `mvp` push trigger ran caller workflow `CI` against reusable job `ci / ci`; Actions run 32059599766 completed successfully in 55 seconds, including locked mise setup, caches, and `mise exec -- moon ci --summary minimal`. The temporary branch trigger was then removed. `actionlint` passed on the final caller and reusable workflow files.
+
+Commits `d16efa4` (`test(ci): exercise reusable workflow`) and `f751527` (`chore(ci): remove mvp test trigger`) were pushed to `origin/mvp`.
