@@ -29,6 +29,7 @@ jobs:
       id-token: write
     env:
       GOTOOLCHAIN: local
+      MISE_EXEC_AUTO_INSTALL: 'false'
     steps:
       - name: Require a tag ref
         shell: bash
