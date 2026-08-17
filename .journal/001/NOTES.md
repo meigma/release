@@ -114,3 +114,11 @@ Closed the affected-file no-op by adding a `ciConfig` file group for `moon.yml` 
 The Aqua registry excludes Intel macOS for Moon 2.5.1 even though upstream publishes the binary. Moon now uses mise's HTTP backend with upstream per-archive SHA-256 files; the generated lock contains checksum-pinned Linux amd64/arm64 and macOS amd64/arm64 entries. `mise install --locked`, `mise exec -- moon --version`, `actionlint`, and local `mise exec -- moon ci --summary minimal` passed.
 
 A temporary `mvp` trigger exercised the hardened reusable workflow on GitHub. Actions run 32063069655 completed successfully in 21 seconds, including the new locked Moon backend and all Moon CI tasks. Commits `3389107` (`fix(ci): harden reusable workflow`) and `e354b31` (`chore(ci): remove review test trigger`) were pushed to `origin/mvp`.
+
+## 2026-08-17 13:09 — Release Please configuration
+
+Adapted the template's manifest-mode Release Please configuration for the MVP. The package is `release-mvp`, uses the Go strategy, unscoped `v*` tags, draft GitHub releases, forced tag creation, pre-1.0 bump rules, and the existing changelog sections. The manifest starts at the never-released sentinel `0.0.0`, while `initial-version: 0.1.0` makes the first release explicit. Template `extra-files` were omitted because `melange.yaml` and `apko.yaml` do not exist in the MVP yet.
+
+Both files passed the Release Please 17.11.1 JSON schemas. A live API-backed `manifest-pr --dry-run` against `origin/mvp` proposed `chore(mvp): release 0.1.0` and updates only `CHANGELOG.md` plus `.release-please-manifest.json`. The first dry run exposed the Go strategy's default first release of `1.0.0`; adding `initial-version` corrected it.
+
+The Release Please workflow was not copied yet. Neither the repository nor the Meigma organization currently exposes the template's `MEIGMA_RELEASE_APP_ID` variable or `MEIGMA_RELEASE_APP_PRIVATE_KEY` secret, so enabling that workflow now would fail on the first `main` push. Commits `159140a` (`build(release): add release-please config`) and `1afe4a7` (`fix(release): start releases at v0.1.0`) were pushed to `origin/mvp`.
