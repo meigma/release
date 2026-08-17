@@ -1,9 +1,6 @@
 name: Reusable Go Pre-publish
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_call:
     outputs:
       artifact-id:
@@ -18,14 +15,9 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   release-assets:
     name: Build authoritative release assets
-    if: github.event_name != 'push' || github.event.deleted == false
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
