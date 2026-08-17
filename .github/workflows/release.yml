@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-assets:
+    name: Build release assets
+    if: github.event.deleted == false
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/go-pre-publish.yml
+
+  github-release:
+    name: Publish GitHub Release
+    needs: release-assets
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/go-publish-github-release.yml
+    with:
+      artifact-id: ${{ needs.release-assets.outputs.artifact-id }}
+      artifact-digest: ${{ needs.release-assets.outputs.artifact-digest }}
+      release-app-client-id: ${{ vars.MEIGMA_RELEASE_APP_CLIENT_ID }}
+      publish-release: false
+    secrets:
+      release-app-private-key: ${{ secrets.MEIGMA_RELEASE_APP_PRIVATE_KEY }}
