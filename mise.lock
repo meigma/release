@@ -88,6 +88,30 @@ checksum = "sha256:f6f06d94b6241521c53d15450c5209b028270bf966f842afb11c030c79f5b
 url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-darwin-amd64.tar.gz"
 provenance = "github-attestations"
 
+[[tools."aqua:goreleaser/goreleaser"]]
+version = "2.17.1"
+backend = "aqua:goreleaser/goreleaser"
+
+[tools."aqua:goreleaser/goreleaser"."platforms.linux-arm64"]
+checksum = "sha256:702f03769ac8bcb0e47839c82243cc614ae995633599a98c63062e13ea85f829"
+url = "https://github.com/goreleaser/goreleaser/releases/download/v2.17.1/goreleaser_Linux_arm64.tar.gz"
+provenance = "github-attestations"
+
+[tools."aqua:goreleaser/goreleaser"."platforms.linux-x64"]
+checksum = "sha256:a99bbc7ae0d8d897b07c4c497a9b62f222558804715ef219d1af05a7e417bc80"
+url = "https://github.com/goreleaser/goreleaser/releases/download/v2.17.1/goreleaser_Linux_x86_64.tar.gz"
+provenance = "github-attestations"
+
+[tools."aqua:goreleaser/goreleaser"."platforms.macos-arm64"]
+checksum = "sha256:f49d4fe67d283b5b5130c380c983087dca0a4d4ec15b6637b18fe1ab096780d8"
+url = "https://github.com/goreleaser/goreleaser/releases/download/v2.17.1/goreleaser_Darwin_all.tar.gz"
+provenance = "github-attestations"
+
+[tools."aqua:goreleaser/goreleaser"."platforms.macos-x64"]
+checksum = "sha256:f49d4fe67d283b5b5130c380c983087dca0a4d4ec15b6637b18fe1ab096780d8"
+url = "https://github.com/goreleaser/goreleaser/releases/download/v2.17.1/goreleaser_Darwin_all.tar.gz"
+provenance = "github-attestations"
+
 [[tools."aqua:sigstore/cosign"]]
 version = "3.1.3"
 backend = "aqua:sigstore/cosign"
