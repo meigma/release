@@ -106,3 +106,11 @@ Two concrete defects deserve early fixes. First, `moon.yml` and `.github/workflo
 Useful hardening candidates: set a job timeout, consider `ubuntu-24.04` instead of `ubuntu-latest`, avoid canceling in-progress `main` push runs, add `filter: blob:none` to the required full-history checkout, and separate CI-only mise tools from the larger release toolchain to reduce the approximately 290 MB cold cache. The rolling `github.run_id` build/lint cache keys trade freshness for continuous cache churn and should be revisited once run data exists. Dependabot and CODEOWNERS belong in later repository-hardening work.
 
 Do not add speculative reusable-workflow inputs yet. Optional inputs can be added backward-compatibly when a real consumer needs variation; the current no-input contract is intentional. The first external consumer must still test caller-repository checkout semantics, repository Actions access policy, and its required standard files.
+
+## 2026-08-17 12:57 — CI review fixes
+
+Closed the affected-file no-op by adding a `ciConfig` file group for `moon.yml` and `.github/workflows/**/*.yml` and including it in every executable task. Hardened the reusable job with a 20-minute timeout, `ubuntu-24.04`, and blobless full-history checkout. The caller now cancels overlapping pull-request runs but preserves every `main` push run.
+
+The Aqua registry excludes Intel macOS for Moon 2.5.1 even though upstream publishes the binary. Moon now uses mise's HTTP backend with upstream per-archive SHA-256 files; the generated lock contains checksum-pinned Linux amd64/arm64 and macOS amd64/arm64 entries. `mise install --locked`, `mise exec -- moon --version`, `actionlint`, and local `mise exec -- moon ci --summary minimal` passed.
+
+A temporary `mvp` trigger exercised the hardened reusable workflow on GitHub. Actions run 32063069655 completed successfully in 21 seconds, including the new locked Moon backend and all Moon CI tasks. Commits `3389107` (`fix(ci): harden reusable workflow`) and `e354b31` (`chore(ci): remove review test trigger`) were pushed to `origin/mvp`.
