@@ -97,3 +97,12 @@ For external consumers, the corresponding call will be `meigma/release/.github/w
 The prototype was tested on GitHub, not only parsed locally. A temporary `mvp` push trigger ran caller workflow `CI` against reusable job `ci / ci`; Actions run 32059599766 completed successfully in 55 seconds, including locked mise setup, caches, and `mise exec -- moon ci --summary minimal`. The temporary branch trigger was then removed. `actionlint` passed on the final caller and reusable workflow files.
 
 Commits `d16efa4` (`test(ci): exercise reusable workflow`) and `f751527` (`chore(ci): remove mvp test trigger`) were pushed to `origin/mvp`.
+
+## 2026-08-17 12:40 — Independent CI review
+A read-only DevOps review found the MVP sound: exact action SHAs and matching version comments, least-privilege permissions, checkout credentials removed, locked and provenance-verified mise installation, explicit `mise exec` boundaries, valid Moon configuration, correct full-history checkout, effective format/lint/build/test gates, and a successful real reusable-workflow run.
+
+Two concrete defects deserve early fixes. First, `moon.yml` and `.github/workflows/**` are not task inputs; a PR changing only the gate can make `moon ci` report no affected tasks and exit zero. Add the gate-defining files to the affected input surface. Second, Moon 2.5.1 lacks a `macos-x64` entry in `mise.lock` despite the requested four-platform lock and an available upstream Intel macOS artifact.
+
+Useful hardening candidates: set a job timeout, consider `ubuntu-24.04` instead of `ubuntu-latest`, avoid canceling in-progress `main` push runs, add `filter: blob:none` to the required full-history checkout, and separate CI-only mise tools from the larger release toolchain to reduce the approximately 290 MB cold cache. The rolling `github.run_id` build/lint cache keys trade freshness for continuous cache churn and should be revisited once run data exists. Dependabot and CODEOWNERS belong in later repository-hardening work.
+
+Do not add speculative reusable-workflow inputs yet. Optional inputs can be added backward-compatibly when a real consumer needs variation; the current no-input contract is intentional. The first external consumer must still test caller-repository checkout semantics, repository Actions access policy, and its required standard files.
