@@ -107,7 +107,7 @@ jobs:
           actual_digest=$(mise exec -- gh api \
             "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" \
             --jq '.digest')
-          if [[ "${actual_digest}" != "${EXPECTED_DIGEST}" ]]; then
+          if [[ "${actual_digest#sha256:}" != "${EXPECTED_DIGEST#sha256:}" ]]; then
             echo "::error::Artifact digest mismatch: expected ${EXPECTED_DIGEST}, got ${actual_digest}."
             exit 1
           fi
