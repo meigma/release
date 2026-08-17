@@ -63,3 +63,10 @@ The implementation will proceed as an integrated MVP on a dedicated `mvp` branch
 `release-mvp greet [name]` provides a real command path and an `--uppercase` flag. Linker-set `main.version` and `main.commit` values drive `--version`; development fallbacks are `dev` and `none`. Focused Testify tests cover default, named, uppercase, and version output. A smoke build injected `1.2.3` and `abc1234` and produced `release-mvp 1.2.3 (abc1234)` plus the expected greeting. `go test ./internal/cli` passed.
 
 The implementation was committed as `0cc6bf9` (`feat(cli): add release MVP sample`) and pushed to `origin/mvp`.
+
+## 2026-08-17 10:29 — mise toolchain
+Rebuilt the template's mise setup rather than copying it. `mise.toml` now pins Go 1.26.6, Python 3.14.7, golangci-lint 2.12.2, uv 0.12.5, Moon 2.5.1, melange 0.59.1, apko 1.2.37, and Cosign 3.1.3. The newer versions were resolved against current upstream releases; `go.mod` moved to Go 1.26.6 to keep the language contract aligned.
+
+The project enables `lockfile` and `locked`, sets `GOTOOLCHAIN=local`, and commits a fresh `mise.lock` with 32 entries covering linux-x64, linux-arm64, macos-x64, and macos-arm64. `mise install` succeeded in locked mode. `mise exec -- go version` selected Go 1.26.6, the environment reported `GOTOOLCHAIN=local`, and `mise exec -- go test ./...` passed.
+
+The template's `image-local` task was intentionally not copied: its melange/apko inputs do not exist yet, so carrying it now would establish a broken task. Add the task with the image configuration when that slice is implemented. Commit `9d23068` (`build(mise): add pinned toolchain`) was pushed to `origin/mvp`.
