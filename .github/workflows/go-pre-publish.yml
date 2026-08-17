@@ -50,29 +50,25 @@ jobs:
         uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
           version: 2026.8.8
-          install_args: 'go aqua:goreleaser/goreleaser'
+          install_args: >-
+            go
+            aqua:goreleaser/goreleaser
+            aqua:anchore/syft
+            aqua:sigstore/cosign
           cache: true
           add_shims_to_path: false
           export_path: false
-
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          syft-version: v1.51.0
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-        with:
-          cosign-release: v3.1.3
 
       - name: Build and sign release assets
         shell: bash
         run: |
           mise exec -- bash -euo pipefail -c '
-            mise_go=$(mise which go)
-            active_go=$(command -v go)
-            test "$(realpath "${active_go}")" = "$(realpath "${mise_go}")"
-            printf "Using %s\n" "${active_go}"
+            for tool in go goreleaser syft cosign; do
+              active=$(command -v "${tool}")
+              managed=$(mise which "${tool}")
+              test "$(realpath "${active}")" = "$(realpath "${managed}")"
+              printf "Using %s: %s\n" "${tool}" "${active}"
+            done
             go version
             goreleaser release --clean --skip=publish
           '
