@@ -122,3 +122,11 @@ Adapted the template's manifest-mode Release Please configuration for the MVP. T
 Both files passed the Release Please 17.11.1 JSON schemas. A live API-backed `manifest-pr --dry-run` against `origin/mvp` proposed `chore(mvp): release 0.1.0` and updates only `CHANGELOG.md` plus `.release-please-manifest.json`. The first dry run exposed the Go strategy's default first release of `1.0.0`; adding `initial-version` corrected it.
 
 The Release Please workflow was not copied yet. Neither the repository nor the Meigma organization currently exposes the template's `MEIGMA_RELEASE_APP_ID` variable or `MEIGMA_RELEASE_APP_PRIVATE_KEY` secret, so enabling that workflow now would fail on the first `main` push. Commits `159140a` (`build(release): add release-please config`) and `1afe4a7` (`fix(release): start releases at v0.1.0`) were pushed to `origin/mvp`.
+
+## 2026-08-17 14:36 — Meigma Release GitHub App
+
+Created the organization-owned private GitHub App `meigma-release` (App ID `4628617`). It has only repository metadata read plus contents, issues, and pull requests read/write; webhooks, OAuth installation authorization, organization permissions, and Actions write access are disabled.
+
+Installation `154493041` is restricted to `meigma/release`. The organization variable `MEIGMA_RELEASE_APP_ID` and Actions secret `MEIGMA_RELEASE_APP_PRIVATE_KEY` both use selected-repository visibility and are also restricted to `meigma/release`. The generated private-key download was uploaded directly to the organization secret and removed from local temporary storage.
+
+GitHub API checks confirmed the app owner, ID, permission set, selected-repository installation mode, credential visibility, and both credential repository scopes. The Release Please workflow can now mint a short-lived installation token through these centralized credentials.
