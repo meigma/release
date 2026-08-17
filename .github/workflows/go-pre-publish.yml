@@ -1,0 +1,97 @@
+name: Reusable Go Pre-publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_call:
+    outputs:
+      artifact-id:
+        description: ID of the authoritative release-assets artifact.
+        value: ${{ jobs.release-assets.outputs.artifact-id }}
+      artifact-url:
+        description: URL of the authoritative release-assets artifact.
+        value: ${{ jobs.release-assets.outputs.artifact-url }}
+      artifact-digest:
+        description: SHA-256 digest of the authoritative release-assets artifact.
+        value: ${{ jobs.release-assets.outputs.artifact-digest }}
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-assets:
+    name: Build authoritative release assets
+    if: github.event_name != 'push' || github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-url: ${{ steps.upload.outputs.artifact-url }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Require a tag ref
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" != 'tag' ]]; then
+            echo '::error::Go pre-publish must run against a tag ref.'
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          filter: 'blob:none'
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: v1.51.0
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: v3.1.3
+
+      - name: Build and sign release assets
+        uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: release --clean --skip=publish
+
+      - name: Verify release asset checksums
+        working-directory: dist
+        shell: bash
+        run: |
+          sha256sum --check checksums.txt
+          test -s checksums.txt.sigstore.json
+
+      - name: Upload authoritative release assets
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sbom.json
+            dist/checksums.txt
+            dist/checksums.txt.sigstore.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
