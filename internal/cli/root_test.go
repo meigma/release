@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/meigma/release/internal/cli"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/meigma/release/internal/cli"
 )
 
 func TestGreet(t *testing.T) {

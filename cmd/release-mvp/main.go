@@ -10,6 +10,7 @@ import (
 	"github.com/meigma/release/internal/cli"
 )
 
+//nolint:gochecknoglobals // Linker-injected build metadata.
 var (
 	version = "dev"
 	commit  = "none"
