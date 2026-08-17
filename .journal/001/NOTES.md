@@ -56,3 +56,10 @@ Separate package creation from repository publication. Candidate outputs include
 This does not cover Debian, Fedora, or other official distribution repositories. Those ecosystems normally rebuild source under distribution control and should be treated as separate source-package/upstreaming tracks, like MacPorts and Nix, rather than consumers of Meigma's canonical binary packages.
 
 Primary references: https://goreleaser.com/customization/nfpm/ and https://nfpm.goreleaser.com/docs/configuration/.
+
+## 2026-08-17 10:13 — MVP CLI bootstrap
+The implementation will proceed as an integrated MVP on a dedicated `mvp` branch, with the user directing scope and sequencing. The first checkpoint is a deliberately small Cobra application shaped like `meigma/template-go`: module `github.com/meigma/release`, executable `cmd/release-mvp`, and command construction under `internal/cli`.
+
+`release-mvp greet [name]` provides a real command path and an `--uppercase` flag. Linker-set `main.version` and `main.commit` values drive `--version`; development fallbacks are `dev` and `none`. Focused Testify tests cover default, named, uppercase, and version output. A smoke build injected `1.2.3` and `abc1234` and produced `release-mvp 1.2.3 (abc1234)` plus the expected greeting. `go test ./internal/cli` passed.
+
+The implementation was committed as `0cc6bf9` (`feat(cli): add release MVP sample`) and pushed to `origin/mvp`.
