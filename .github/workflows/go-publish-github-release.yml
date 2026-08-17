@@ -120,8 +120,12 @@ jobs:
         run: |
           release=''
           for attempt in {1..24}; do
-            if release=$(mise exec -- gh api \
-              "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" 2>/dev/null); then
+            if release=$(
+              mise exec -- gh api --paginate --slurp \
+                "repos/${GITHUB_REPOSITORY}/releases?per_page=100" 2>/dev/null |
+                jq -ce --arg tag "${GITHUB_REF_NAME}" \
+                  '[.[][] | select(.tag_name == $tag)] | first // empty'
+            ); then
               break
             fi
             printf 'Draft release not available; retrying (%s/24).\n' "${attempt}"
