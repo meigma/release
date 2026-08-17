@@ -130,3 +130,13 @@ Created the organization-owned private GitHub App `meigma-release` (App ID `4628
 Installation `154493041` is restricted to `meigma/release`. The organization variable `MEIGMA_RELEASE_APP_ID` and Actions secret `MEIGMA_RELEASE_APP_PRIVATE_KEY` both use selected-repository visibility and are also restricted to `meigma/release`. The generated private-key download was uploaded directly to the organization secret and removed from local temporary storage.
 
 GitHub API checks confirmed the app owner, ID, permission set, selected-repository installation mode, credential visibility, and both credential repository scopes. The Release Please workflow can now mint a short-lived installation token through these centralized credentials.
+
+## 2026-08-17 15:02 — Authenticated Release Please workflow
+
+Added `.github/workflows/release-please.yml` on `mvp`. The final workflow runs on `main` pushes or manual dispatch, mints a repository-scoped installation token with `actions/create-github-app-token` v3.2.0, and runs `googleapis/release-please-action` v5.0.0 against the manifest configuration. Both actions are pinned by full commit SHA; the job uses Ubuntu 24.04 with a 10-minute timeout.
+
+The first live rehearsal exposed that `create-github-app-token` now deprecates `app-id` in favor of `client-id`. The organization credential is therefore `MEIGMA_RELEASE_APP_CLIENT_ID`, selected-repository scoped to `meigma/release`; the obsolete `MEIGMA_RELEASE_APP_ID` variable was deleted. This corrects the variable name recorded in the preceding GitHub App checkpoint. The private-key secret name and scope are unchanged.
+
+Three temporary `mvp` runs exercised token creation and Release Please. Runs `32073789780`, `32073890921`, and `32073942559` succeeded; the client-ID runs emitted no deprecation annotation. The app authored pull request #1, and updating that PR triggered CI run `32073969078`, which passed in 24 seconds. This proves the App token preserves downstream workflow fan-out. The rehearsal PR was closed and its generated branch deleted.
+
+Temporary `mvp` triggers and CI filters were removed. The final remote workflow targets only `main`; `actionlint` and local `mise exec -- moon ci --summary minimal` both passed. Repository rulesets are currently empty, so no protected-tag bypass is needed yet. Final workflow commits are `12ff06f` (`ci(release): add release-please workflow`) and `aeefd90` (`fix(release): use GitHub App client ID`).
