@@ -4,3 +4,4 @@
 .wt/
 .moon/cache/
 bin/
+dist/
