@@ -24,6 +24,9 @@ fileGroups:
     - '.golangci.yml'
     - 'mise.toml'
     - 'mise.lock'
+  ciConfig:
+    - 'moon.yml'
+    - '.github/workflows/**/*.yml'
 
 workspace:
   inheritedTasks:
@@ -35,6 +38,7 @@ tasks:
     inputs:
       - '@group(goSources)'
       - '@group(lintConfig)'
+      - '@group(ciConfig)'
     options:
       cache: false
 
@@ -43,6 +47,7 @@ tasks:
     inputs:
       - '@group(goSources)'
       - '@group(lintConfig)'
+      - '@group(ciConfig)'
     options:
       cache: false
 
@@ -50,6 +55,7 @@ tasks:
     command: 'mise exec -- go build -o bin/release-mvp ./cmd/release-mvp'
     inputs:
       - '@group(goSources)'
+      - '@group(ciConfig)'
     outputs:
       - 'bin/release-mvp'
 
@@ -57,6 +63,7 @@ tasks:
     command: 'mise exec -- go test ./...'
     inputs:
       - '@group(goSources)'
+      - '@group(ciConfig)'
     options:
       cache: false
 
@@ -69,6 +76,7 @@ tasks:
     inputs:
       - '@group(goSources)'
       - '@group(lintConfig)'
+      - '@group(ciConfig)'
     options:
       cache: false
       runInCI: true
