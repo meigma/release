@@ -1,4 +1,4 @@
-name: Reusable Go GitHub Release Publisher
+name: Reusable GitHub Release Publisher
 
 on:
   workflow_call:
@@ -9,6 +9,10 @@ on:
         type: string
       artifact-digest:
         description: Expected SHA-256 digest of the release-assets artifact.
+        required: true
+        type: string
+      checksum-signing-workflow:
+        description: Repository-relative workflow path that signed checksums.txt.
         required: true
         type: string
       release-app-client-id:
@@ -165,14 +169,60 @@ jobs:
           path: dist
           digest-mismatch: error
 
-      - name: Verify authoritative release assets
+      - name: Verify authoritative release bundle
         env:
-          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/go-pre-publish.yml@${{ github.ref }}
+          ASSET_LIST: ${{ runner.temp }}/release-assets.txt
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/${{ inputs.checksum-signing-workflow }}@${{ github.ref }}
         shell: bash
         run: |
           mise exec -- bash -euo pipefail -c '
             cd dist
+            : >"${ASSET_LIST}"
+            declare -A seen=()
+            while read -r checksum name; do
+              name="${name#\*}"
+              if [[ ! "${checksum}" =~ ^[[:xdigit:]]{64}$ ||
+                    ! "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+                echo "::error::Invalid checksums.txt entry: ${checksum} ${name}."
+                exit 1
+              fi
+              if [[ "${name}" == checksums.txt ||
+                    "${name}" == checksums.txt.sigstore.json ]]; then
+                echo "::error::Control file ${name} must not be listed in checksums.txt."
+                exit 1
+              fi
+              if [[ -n "${seen[${name}]:-}" ]]; then
+                echo "::error::Duplicate checksums.txt entry: ${name}."
+                exit 1
+              fi
+              if [[ ! -f "${name}" || -L "${name}" ]]; then
+                echo "::error::Release payload ${name} is not a regular file."
+                exit 1
+              fi
+              seen["${name}"]=1
+              printf "dist/%s\n" "${name}" >>"${ASSET_LIST}"
+            done <checksums.txt
+
+            if (( ${#seen[@]} == 0 )); then
+              echo "::error::checksums.txt does not list any release payloads."
+              exit 1
+            fi
+
+            shopt -s dotglob nullglob
+            for name in *; do
+              if [[ "${name}" == checksums.txt ||
+                    "${name}" == checksums.txt.sigstore.json ]]; then
+                continue
+              fi
+              if [[ ! -f "${name}" || -L "${name}" ||
+                    -z "${seen[${name}]:-}" ]]; then
+                echo "::error::Unlisted or invalid release bundle entry: ${name}."
+                exit 1
+              fi
+            done
+
             sha256sum --check checksums.txt
+            test -s checksums.txt.sigstore.json
             cosign verify-blob \
               --bundle checksums.txt.sigstore.json \
               --certificate-identity "${CERTIFICATE_IDENTITY}" \
@@ -188,21 +238,15 @@ jobs:
 
       - name: Upload release assets
         env:
+          ASSET_LIST: ${{ runner.temp }}/release-assets.txt
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
         shell: bash
         run: |
-          shopt -s nullglob
-          assets=(
-            dist/*.tar.gz
-            dist/*.zip
-            dist/*.sbom.json
+          mapfile -t assets <"${ASSET_LIST}"
+          assets+=(
             dist/checksums.txt
             dist/checksums.txt.sigstore.json
           )
-          if (( ${#assets[@]} == 0 )); then
-            echo '::error::No release assets found.'
-            exit 1
-          fi
           mise exec -- gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" \
             --repo "${GITHUB_REPOSITORY}"
 
@@ -212,15 +256,19 @@ jobs:
           RELEASE_ID: ${{ steps.draft.outputs.id }}
         shell: bash
         run: |
-          release_assets=$(mise exec -- gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")
+          release_assets=$(
+            mise exec -- gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100" |
+              jq -c 'add'
+          )
 
           expected_count=2
           while read -r checksum name; do
+            name="${name#\*}"
             expected_count=$((expected_count + 1))
             actual=$(jq -r --arg name "${name}" \
               '.[] | select(.name == $name) | .digest' <<<"${release_assets}")
-            if [[ "${actual}" != "sha256:${checksum}" ]]; then
+            if [[ "${actual}" != "sha256:${checksum,,}" ]]; then
               echo "::error::Release asset ${name} has digest ${actual}, expected sha256:${checksum}."
               exit 1
             fi
