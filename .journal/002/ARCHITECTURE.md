@@ -113,7 +113,9 @@ Genuine ports (declared in the consumer package, I2; mockery mocks in `internal/
 
 `ReleaseReader` merges rev-2's `DraftFinder`+`AssetReader`: both are read-only observations of the candidate release through one adapter. `AssetReplacer` and `Publisher` stay separate — expected-name replacement is recoverable while draft; undrafting is the irreversible visibility transition (invariants 9–10).
 
-**Deliberately not ports (residual YAML; CLI verifies results):** checkout, mise install + tool-path proofs (PP-04/OB-05), QEMU/binfmt, artifact transport (decision 13), `actions/attest` (subjects from `OCIPrepareResult`; success observed by the workflow, never claimed by the CLI), `actions/create-github-app-token` (decision 8). Native `reg` credentials live in memory and are never persisted, intentionally obsoleting OP-09/OP-20 login/logout.
+**Deliberately not ports (residual YAML; CLI verifies results):** checkout, mise install + tool-path proofs (PP-04/OB-05), QEMU/binfmt, artifact transport (decision 13), `actions/attest` (subjects from `OCIPrepareResult`; success observed by the workflow, never claimed by the CLI), `actions/create-github-app-token` (decision 8), and **registry login** — see below.
+
+**Correction from spike B (2026-08-18):** an earlier revision claimed native `reg` credentials, held in memory and never persisted, obsoleted OP-09/OP-20 login/logout. That is false while signing and attestation are external. `oras-go` does authenticate purely in memory for the CLI's own pushes, but `cosign` is a separate process and `actions/attest --push-to-registry` resolves credentials **only** from the docker config: it fails with `No credentials found for registry ghcr.io` otherwise. So OP-09 survives as one login step that serves cosign and the attest actions (`cosign login ghcr.io --password-stdin` works and replaces the `oras` binary), and OP-20 survives as cleanup — but `cosign` has no `logout` subcommand, so cleanup is a docker-config edit, not a tool call. `cosign` also accepts `--registry-username`/`--registry-password` per invocation, which is sufficient for `sign`/`verify`/`tree` alone but not for `actions/attest`.
 
 ---
 

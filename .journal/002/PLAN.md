@@ -38,7 +38,7 @@ The integration order is linear because the PRs touch a shared command tree and 
 | 1 | PP-06–PP-08 | 3 | Replaced by `stage` |
 | 2 | OB-06, GR-05, OP-03 | 3 | Replaced by `verify handoff` |
 | 3 | OP-10–OP-12 | 3 | Policy and reads land; workflow cutover occurs in PR 5 |
-| 4 | OP-09, OP-13–OP-15, OP-20 | 5 | Native in-memory auth, digest push/sign; logout obsoleted; cutover in PR 5 |
+| 4 | OP-09, OP-13–OP-15, OP-20 | 5 | In-memory auth for the CLI's own pushes, digest push/sign; **OP-09 login and OP-20 cleanup survive** (spike B: `actions/attest --push-to-registry` and `cosign` read the docker config, so a login step is required and `cosign` has no `logout`); cutover in PR 5 |
 | 5 | OP-19 | 1 | Replaced by `finalize`; OP-16–OP-18 remain residual YAML |
 | 6 | GR-09–GR-12 | 4 | Replaced by `verify bundle` |
 | 7 | GR-06–GR-08, GR-14–GR-18 | 8 | Decision logic moves; GR-08 itself deliberately remains the SHA-pinned transport step under the three-owner handoff contract |
@@ -955,7 +955,19 @@ The protocol is a mismatch guard, not negotiation: no range, compatibility matri
 
 **Pass:** byte/digest parity, referrer coexistence, all postconditions, and recoverable partial failures without persisted credentials.
 
-**Fallback:** retain the pinned ORAS binary behind the **same** `StateReader`, `ContentPusher`, and `TagCommitter` ports. Planner/prepare/finalize behavior and tests remain unchanged; only `internal/adapter/reg` shells out. No fourth registry port or workflow decision script is permitted.
+**Result — PASSED 2026-08-18; PR 3 and PR 4 are unblocked, with two contract corrections.** `oras-go` v2 **v2.6.2** pinned. Scratch repo `meigma/release-oras-spike` (archived), package `ghcr.io/meigma/release-oras-spike`, run 32193386872 green end to end after three corrected attempts.
+
+Proven against real GHCR, in this order: exact tag absent before publication; a deliberately aborted graph copy leaves content addressable but **no tag** (so nothing is consumer-visible); re-push converges over already-present blobs; the index resolves by digest to exactly the expected digest; both platform manifests resolve by digest; the index version annotation is readable for channel planning; publication completed with **no tag applied** (`digest-published-without-public-tag`, class `absent`); then `cosign sign --recursive` plus three `actions/attest` calls (one provenance on the index, one SPDX SBOM per platform, all `push-to-registry: true`); `cosign tree` then showed **coexisting referrers** — index carries `sigstore.dev/cosign/sign/v1` + `slsa.dev/provenance/v1`, each platform manifest carries `sigstore.dev/cosign/sign/v1` + `spdx.dev/Document/v2.3`; only then were `v9.9.12`, `9.9`, `9`, `latest` applied serially and verified; re-tagging the same digest was accepted; `cosign verify` and `gh attestation verify oci://…` both passed **after** tagging. Invariant 14 is therefore enforceable exactly as the two-phase protocol assumes, and the local (`-mode=local`, in-process registry) run produced an identical index digest to the GHCR run, so layout digests are deterministic across substrates.
+
+**Corrections this spike forces:**
+
+1. **Registry login is not obsolete.** `actions/attest --push-to-registry` fails with `No credentials found for registry ghcr.io` unless a docker config exists, and `cosign` is a separate process from the CLI. PR 4 keeps one login step — `cosign login ghcr.io --username … --password-stdin` replaces the `oras` binary — and PR 4's cleanup is a docker-config edit because **`cosign` has no `logout` subcommand** (`unknown command "logout" for "cosign"`). `cosign --registry-username/--registry-password` works per invocation for `sign`/`verify`/`tree`, but does not help the attest actions.
+2. **`oras.CopyGraph` is concurrent by default** (`DefaultCopyGraphOptions` sets `Concurrency: 3`), so partial-failure abort points are not strictly ordered. The `ContentPusher` adapter must either set `Concurrency: 1` where deterministic recovery reporting matters or treat the pushed-set as unordered; `TagCommitter` must remain strictly serial regardless.
+3. **`actions/attest` validates SBOM payloads.** A loose JSON blob is rejected with `Unsupported SBOM format. Must be valid SPDX or CycloneDX JSON`, so PR 8/9 fixtures must be schema-valid SPDX, not plausible-looking JSON.
+
+Also observed, benign: `actions/attest` logs `Failed to create storage record: no artifacts found` in a scratch repo with no build artifacts; attestations were still created and verifiable (`attestations/41481491`, `41481498`, `41481504`).
+
+**Fallback (unused):** retain the pinned ORAS binary behind the **same** `StateReader`, `ContentPusher`, and `TagCommitter` ports. Planner/prepare/finalize behavior and tests remain unchanged; only `internal/adapter/reg` shells out. No fourth registry port or workflow decision script is permitted.
 
 ### C. Release Please action/version/protocol stamping
 
