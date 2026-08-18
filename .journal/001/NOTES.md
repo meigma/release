@@ -242,3 +242,13 @@ Added `examples/go-release/`, a copyable release-only consumer with a dependency
 Two technical-writer agents drafted the reference and task-oriented guides under the `language-style` and Diátaxis rules. A conformance review found stale-run recovery, ambiguous run selection, unsupported proof phrasing, limited draft pagination, incomplete upgrade migration/rollback, API diff truncation, draft download, and target-contract override defects. All findings were corrected; the final conformance verdict passed.
 
 Validation passed for all internal Markdown links, all 36 documented Bash blocks, YAML and JSON parsing, immutable action and reusable-workflow refs, `actionlint`, locked mise installation and lock regeneration, `goreleaser check`, `go test ./...`, injected `--version` behavior (`example 0.1.0 (deadbeef)`), and all seven Moon tasks. Implementation commit: `9c13e9b` (`docs(release): document consumer adoption`).
+
+## 2026-08-17 22:03 — nFPM APK byte-preservation prototype
+
+Added one GoReleaser nFPM definition that consumes the existing `release-mvp` build ID and emits APK packages for the Linux targets without another compilation step. Snapshot `0.0.0-SNAPSHOT-9c13e9b` produced `release-mvp_0.0.0_SNAPSHOT-9c13e9b_x86_64.apk` and `release-mvp_0.0.0_SNAPSHOT-9c13e9b_aarch64.apk`. Their `.PKGINFO` records identify the expected package name, version, architecture, description, homepage, and public Meigma maintainer address.
+
+The nFPM boundary preserves the authoritative executable exactly. The amd64 canonical binary and `/usr/bin/release-mvp` extracted from the x86_64 APK both have SHA-256 `fd7b996a31aa6a1d124b5d005eea42f28d40f545e1e5101867244418fcf7b2ae`. The arm64 pair both have SHA-256 `fa349034dbaa4f14470422fd70629249935ab373c2f881d09ce9d67310bf61be`. `cmp` also passed for both pairs. APK archive headers install the static ELF executables as root-owned mode `0755`; nFPM did not strip or otherwise mutate them.
+
+The packages are currently unsigned, and `.PKGINFO` has no license field because this repository has no license declaration. Neither blocks the byte-preservation result. Repository indexing, repository signing, and the project license remain inputs to the apko composition experiment.
+
+`goreleaser check`, the complete snapshot build, `git diff --check`, and all seven Moon tasks passed. Implementation commit: `4ab8f9d` (`feat(release): package canonical binaries as APKs`). Decision: nFPM passes the first OCI adapter gate; test a minimal indexed APK repository before introducing Melange.
