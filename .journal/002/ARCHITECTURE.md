@@ -1,34 +1,33 @@
 # release-cli — Initial Architecture
 
-**Revision 2** — incorporates the adversarial architecture review (`local://architecture-review.md`); dispositions in §13.
+**Revision 3** — incorporates the adversarial correctness review (`local://architecture-review.md`) and the complexity review (`local://complexity-review.md`), both adjudicated by the owner; dispositions in §13.
 
-Status: proposal for review before code. Repo: `meigma/release` (`github.com/meigma/release`, main @ `0c39bed`). This replaces ~90% of the bespoke logic in the four reusable workflows (`go-pre-publish`, `go-oci-build`, `publish-github-release`, `publish-oci-image`, ~1650 lines of YAML/bash/github-script) with one profile-driven Go CLI, keeping GitHub Actions as a thin orchestration shell. Deliberately thin where prototyping should teach us; flagged in §12.
+Status: proposal to build from. Repo: `meigma/release` (`github.com/meigma/release`, main @ `0c39bed`). One profile-driven Go CLI replaces the bespoke decision logic in the four reusable workflows (`go-pre-publish`, `go-oci-build`, `publish-github-release`, `publish-oci-image`); GitHub Actions stays a thin orchestration shell. Precise scope: **42 of 70 logical steps, an upper bound of ~1,059 of 1,641 lines (~64.5%)**, migrate into the CLI (§11); essentially all embedded bash/github-script *decision* logic moves, but the whole-file "~90%" figure is retired. Deliberately underspecified where prototyping should teach us; every deferral carries an observable trigger.
 
 ---
 
 ## 1. Decisions up front
 
-1. **One binary, `release-cli`, with stage verbs and a `--profile` flag** — verb-per-language was rejected by the user; ecosystems plug in as profiles, not commands. *(user requirement)*
-2. **The profile seam is a Go interface ending at a versioned release manifest; everything downstream is ecosystem-neutral** — the inventory shows only PP-03–PP-08/OB-09–OB-11 are Go-specific. *(A1, inventory §3)*
-3. **One logical release manifest with stage-scoped projections, copied into both existing artifacts** — `release-assets` and `oci-build-inputs` are deliberately disjoint (PP-09/PP-10); each downstream stage validates only its projection. Combined-artifact alternative rejected (§13). *(inventory invariant 4)*
-4. **OCI publication is an explicit two-phase protocol: `publish oci prepare` → YAML `actions/attest` → `publish oci finalize`** — a single command cannot put attestations before tags while attest stays in YAML; invariant 14 requires prepare/finalize with an immutable publication receipt between. *(inventory OP-13–OP-19, invariant 14)*
-5. **Pure core in `internal/rel`; every side effect behind a narrow, use-case-shaped, consumer-declared port — including slice 1's filesystem work (bundle scan, artifact reading, manifest store); no generic `Filesystem` port** *(A1, A2, P2)*
-6. **Large services decompose into narrow ports implemented by one concrete adapter each** — `reg` implements `StateReader`/`ContentPusher`/`TagCommitter`; the GitHub adapters implement `DraftFinder`/`AssetReader`/`AssetReplacer`/`Publisher`. *(A2)*
-7. **OCI registry ops use `oras-go` v2 natively; goreleaser/melange/apko/cosign stay pinned subprocesses; asset replacement keeps `gh release upload --clobber` behind a port** — libraries where fakes buy testability, subprocesses where the tool's exact behavior *is* the contract. GHCR-parity spike is the slice-3 acceptance gate, not polish. *(L1, R1; user requirement: local testability)*
-8. **GitHub App token minting stays in YAML (`actions/create-github-app-token`) by default** — the CLI never touches the App private key; it receives a short-lived token via env. Native minting is a later spike only if it demonstrably shrinks exposure. *(actions-constraints §3)*
-9. **Secrets are structurally unprintable** — an opaque `Secret` type redacts in `String`/`MarshalJSON`/error wrapping; the private key never enters the CLI at all under decision 8; `config show` renders only the effective non-secret config. *(E1 hygiene, review finding 8)*
-10. **Domain terms get types with validating constructors: `Version`, `Tag`, `Digest`, `Channel`, `AssetName`, `ChecksumSet`…** — parse-time enforcement replaces ~10 hand-rolled regexes. A validated `Bundle` exists only after a scanner reconciles checksum claims against real files. *(I1)*
-11. **Immutable facts are values; mutable intent is only ever a purely computed `Plan`/receipt an adapter applies from fresh remote state** — no stale plan is ever replayed; finalize re-resolves and refuses drift. *(A1, invariants 11–14)*
-12. **stdout carries one stable versioned JSON envelope (`--json`) including `phase` and a per-mutation status list; human text on stderr; GitHub outputs via an `actenv` adapter; exit codes 0/1/2/3** — exit 3 means "transient failure, retries exhausted", **not** "safe to re-run"; each mutating command defines its own rerun reconciliation (§2). *(user requirement: machine consumption; review finding 6)*
-13. **Handoff integrity has three explicit owners:** CLI `verify handoff` validates the API metadata tuple *before* download; SHA-pinned `actions/download-artifact` (`digest-mismatch: error`) owns transport-digest verification; CLI content commands verify the extracted contract. The CLI never claims to recompute the Actions artifact digest. *(inventory invariant 4; review finding 5)*
-14. **CI delivery is layered: reusable workflows → one composite `setup-release-cli` action → CLI** — job permissions/environments/concurrency/`needs` only exist in reusable workflows; the composite is the per-job CLI bridge. *(actions-constraints §1, §7)*
-15. **Dogfood via explicit `cli-path`:** the owning repo builds the branch binary in a prior step and passes its path; external consumers get the version stamped into the action at their pinned SHA. No magic `version: local`, no owner guard needed. *(actions-constraints §5)*
-16. **Skew is prevented by a stamped protocol handshake, not by `$/` alone** — `$/` pins action *source* to the workflow commit; the workflow additionally stamps a required CLI protocol version, and the action rejects any installed/overridden CLI whose `version --json` protocol mismatches, before any side effect. Source-commit binding via provenance predicate is an experiment (§12). *(actions-constraints §4; review finding 7)*
-17. **Bootstrap integrity: sha256 from `checksums.txt` + `gh attestation verify` against the distribution repo derived from `github.action_repository`** — nothing hardcodes `meigma/release`. *(user requirement: portability)*
-18. **Nothing hardcodes org/repo/registry: defaults derive from `GITHUB_REPOSITORY`/git remote; slice 1 uses flags+env only; `release.toml` is introduced with the first durable knob (expected: slice 3 registry override)** *(user requirement: portability; agile mandate)*
-19. **Three test layers: pure-core unit; engine tests with mockery mocks; system tests (testscript/txtar against stateful in-process fakes). Live coverage stays with the cross-repo rehearsal** — fakes prove wiring and decisions, not external contracts; the rehearsal is the T1 layer-3 proof. *(T1, T2, T3)*
-20. **Migration is strangler-style, one step cluster per PR; slice 1 replaces PP-06–PP-08 only and scaffolds only the packages it needs** *(user requirement: agile; R1)*
-21. **Every package ships `doc.go`; godoc on every function/type/field; 1000-line file cap** — the template currently violates this; we don't copy the omission. *(D1, D4, R2)*
+1. **One binary, `release-cli`, with stage verbs and a `--profile` flag** — verb-per-language rejected; ecosystems are profiles, not commands. *(user requirement)*
+2. **The profile seam is the `goprof` package boundary with direct dispatch on `--profile go`** — no interface, registry, `Name()`, or profile mock while one implementation exists. `--profile` stays the public shape; unknown values are usage errors (exit 2). **Trigger to add the interface/registry: a second real ecosystem profile reaching an implementation PR.** *(inventory §3: only PP-03–PP-08/OB-09–OB-11 are Go-specific)*
+3. **Slice 1 persists nothing.** PP-09/PP-10 uploads stay byte-for-byte as today; no manifest, projections, store, or artifact edits. **Trigger for a persisted staged-facts contract: the first downstream CLI command that reads staged facts — that PR serializes only the projection that artifact's consumer validates, never a superset referencing absent files.** *(inventory invariant 4 stays on today's artifacts)*
+4. **OCI publication is two-phase: `publish oci prepare` → YAML `actions/attest` → `publish oci finalize`** — attest needs job-level OIDC/attestation permissions only YAML can hold (actions-constraints §2), and invariant 14 requires trust metadata before public tags. The **`OCIPrepareResult`** (digests, tag-plan inputs, attestation subjects) is not a file: it travels as the `--json` envelope `result` that the workflow re-feeds to `finalize` on stdin (`--result -`). The transport is the envelope we already need; there is no persistence port and nothing to clean up. *(inventory OP-13–OP-19, invariant 14)*
+5. **Pure core; A1 is satisfied by stdlib interfaces for deterministic local plumbing.** Rule resolution, stated once and binding: **A1 requires a boundary, not a bespoke boundary.** `fs.FS`/`io.Reader`/`io.Writer` are the ports for local file work; R1/R3 win there. Custom consumer-owned ports exist only at remote, subprocess, credential, and irreversible-mutation boundaries, where A1/A2 win (§4).
+6. **Narrow use-case ports, one concrete adapter implementing several** — `reg` implements `StateReader`/`ContentPusher`/`TagCommitter`; `ghrel` implements `ReleaseReader`/`Publisher`. *(A2)*
+7. **`oras-go` v2 natively for registry ops; goreleaser/melange/apko/cosign stay pinned subprocesses; asset replacement keeps `gh release upload --clobber` behind `AssetReplacer`** — libraries where fakes buy testability, subprocesses where the tool's exact behavior *is* the contract. The scratch-GHCR parity spike is the slice-3 acceptance gate. *(L1, R1; invariant 10)*
+8. **GitHub App token minting stays in YAML (`actions/create-github-app-token`)** — the CLI never touches the App private key. *(actions-constraints §3)*
+9. **Secrets are structurally unprintable** — opaque `Secret` type redacting in `String`/`MarshalJSON`/error wrapping. *(E1; correctness finding 8)*
+10. **Domain types with validating constructors are introduced with the slice that uses them** — I1 applies to terms actually in use, not the eventual vocabulary. Slice 1 needs checksum/selection facts; `Version`/`Digest`/`ChannelState`/`TagPlan` land in slice 3 (§3).
+11. **Immutable facts are values; mutable intent is only a purely computed plan applied from fresh remote state** — no stale plan is replayed; `finalize` re-resolves and refuses drift. *(invariants 11–14)*
+12. **stdout carries one versioned JSON document under `--json`: `{"schema","command","ok","result"}`; human text on stderr; exit codes 0 (success) / 1 (contract or verification failure, fail-closed) / 2 (usage/config).** No `phase`, no `mutations`, no exit 3. There is **no generic safe-rerun promise**; each mutating command reconciles from fresh remote state (§2). **Trigger for a stable mutation-status report and a retry-exhausted exit code: the first ambiguous remote write plus a caller that programmatically branches on it.** *(correctness finding 6, narrowed — see §13)*
+13. **Handoff integrity has three owners:** CLI `verify handoff` validates the API metadata tuple before download; SHA-pinned `actions/download-artifact` (`digest-mismatch: error`) owns transport-digest verification; CLI content commands verify the extracted contract. The CLI never claims to recompute the Actions artifact digest. *(invariant 4; correctness finding 5)*
+14. **CI delivery is layered: reusable workflows → one composite `setup-release-cli` → CLI** — job permissions/environments/concurrency/`needs`/timeouts/artifact transport exist only in reusable workflows; the composite is the per-job CLI bridge. *(actions-constraints §1)*
+15. **The workflows, the composite action, and the CLI are one release unit with one version and one consumer pin.** `cli-version` does not exist; `cli-path` is an unsupported escape hatch; a stamped-integer guard catches mismatches (§8). *(release-please-config.json:11-16; replaces rev-2 decision 16)*
+16. **Bootstrap integrity: sha256 from `checksums.txt` + `gh attestation verify` against the repo derived from `github.action_repository`** — nothing hardcodes `meigma/release`. *(portability)*
+17. **Nothing hardcodes org/repo/registry: flags + env + derived defaults only.** Registry defaults to `ghcr.io/<owner>/<repo>` lowercased from `GITHUB_REPOSITORY` (git-remote fallback); signing identity and distribution repo derive from context. **Trigger for `release.toml` (and, with it, `config show`/`config validate`): a real adopter needing a non-derived registry target, or a second durable setting.** The inventory found zero current consumers of either (inventory "negative findings").
+18. **Three evidence layers, not five harness modes:** pure unit tests; integration on cheap real substrates (`t.TempDir()`, `fstest.MapFS`, in-memory registry) or mockery mocks for genuine adapters; live cross-repo rehearsal as the T1 layer-3 proof. No testscript/txtar, no `e2e` package. *(T1–T3)*
+19. **Strangler migration, one step cluster per PR; slice 1 is four production packages replacing PP-06–PP-08** (§11).
+20. **`doc.go` + full godoc + mockery obligations apply to every package and genuine adapter that survives** — fewer packages, not lower standards for the ones that exist. *(D1, D4, T2, T3)*
 
 ---
 
@@ -36,213 +35,145 @@ Status: proposal for review before code. Repo: `meigma/release` (`github.com/mei
 
 ```
 release-cli
-  stage        --profile <name>            # stage 1: verify assets, select binaries, emit manifest
-  image build                              # stage 2: melange+apko layout from manifest projection
-  image verify                             # stage 2 verification only (OB-18..OB-21)
-  publish oci prepare                      # stage 4b phase 1: plan, push by digest, verify, sign; emit receipt
-  publish oci finalize                     # stage 4b phase 2: consume receipt, re-resolve, tag serially, verify
-  publish github  [--no-undraft]           # stage 4a: verify bundle, upload/replace, converge, undraft
-  plan tags                                # pure planning from remote state, zero writes
-  verify handoff  --artifact-id --digest   # pre-download Actions artifact metadata tuple (OB-06/GR-05/OP-03)
-  verify bundle                            # closed-set + checksum + signature validation (GR-09..GR-12)
-  version                                  # includes protocol version and source commit
+  stage        --profile go --dist PATH [--json]   # slice 1: PP-06..08
+  verify handoff  --artifact-id --digest           # slice 2: OB-06/GR-05/OP-03 metadata tuple
+  publish oci prepare  [--dry-run]                 # slice 3: plan, push by digest, verify, sign
+  publish oci finalize --result -                  # slice 3: re-resolve fresh, refuse drift, tag serially
+  plan tags                                        # slice 3: pure planning, zero writes
+  publish github  [--no-undraft]                   # slice 4: verify bundle, replace, converge, undraft
+  verify bundle                                    # slice 4: closed-set + checksum + signature (GR-09..12)
+  image build | image verify                       # slice 5: melange+apko layout; OB-18..21 checks
+  version                                          # always: version, commit, protocol integer
 ```
 
-- **Verbs are pipeline capabilities**, ecosystem-neutral by construction; adding Rust never adds a verb.
-- **A profile names a registered `Profile` implementation**; only `stage` takes it — ecosystem knowledge ends at the release manifest (§6).
-- **Flags are run-scoped modifiers** (`--dist`, `--registry`, `--json`, `--dry-run` on mutating commands). Org-durable settings are config (§7).
+Verbs are pipeline capabilities, ecosystem-neutral; only `stage` takes `--profile`. Each command exists only from its slice onward; slice 1 ships `stage` and `version`.
 
-**Two-phase OCI protocol (invariant 14).** `prepare` re-plans from live state, pushes blobs/manifests by digest, verifies resolution, recursively signs index+platform manifests, and writes an immutable versioned **publication receipt** (digests, tag plan inputs, attestation subjects). YAML runs the three `actions/attest` steps against subjects from the receipt. `finalize` consumes the receipt, **re-resolves exact and channel state fresh**, refuses any drift from the receipt's digests, applies tags serially, and verifies every resulting tag plus the exact tag. Trust metadata therefore strictly precedes public tags.
+**Two-phase OCI protocol (invariant 14).** `prepare` re-plans from live registry state, pushes blobs/manifests by digest, verifies resolution, recursively signs index + platform manifests, and emits `OCIPrepareResult` as its `--json` `result`. YAML runs the three `actions/attest` steps against subjects from that result. `finalize` reads the result from stdin, **re-resolves exact and channel state fresh**, refuses any drift from the result's digests, applies tags serially, and verifies every resulting tag plus the exact tag. Trust metadata strictly precedes public tags.
 
-**Output contract (stable):** with `--json`, stdout emits exactly one document: `{"schema":"release.dev/result/v1","command":…,"ok":…,"phase":…,"mutations":[{"op":…,"target":…,"status":"applied|failed|unknown"}],"result":{…}}`. Envelope and `mutations` are stable from slice 1; command-specific `result` payloads stabilize as each command ships. Under Actions, outputs (`image-digest`, `release-url`, …) are written via `actenv` with today's names, so `workflow_call` plumbing survives. Annotations only when Actions is detected.
+**`--dry-run` across the two phases:** `prepare --dry-run` plans and validates, pushes nothing, and marks its result `"authoritative": false`. `finalize` refuses a non-authoritative result (exit 1). Verification-only publication (`publish-image: false` today) maps to `prepare --dry-run` + skipped finalize (invariant 15).
 
-**Exit codes:** `0` success; `1` contract/verification failure (fail-closed); `2` usage/config error; `3` transient failure after bounded retries — **no rerun promise**; automation must consult `mutations`. Rerun reconciliation per command: `finalize` reruns always re-plan from fresh state (same version+digest ⇒ complete, ambiguous prior tag write ⇒ resolve-then-decide); `publish github` reruns recognize an already-public release with the exact converged expected asset set as success, otherwise report indeterminate (exit 1) for manual reconciliation — it never creates or re-drafts (invariant 1).
+**Output contract:** with `--json`, stdout emits exactly one `{"schema":"release.dev/result/v1","command":…,"ok":…,"result":{…}}`. Command-specific `result` payloads stabilize as each command ships. Under Actions, today's output names (`image-digest`, `release-url`, …) are written via the Actions runtime seam (§4) so `workflow_call` plumbing survives — these names are **internal to the release unit** (§8), not a consumer API.
+
+**Rerun reconciliation (per command, from fresh state — never a blanket promise):** `finalize` reruns always re-plan; same version+digest ⇒ complete; an ambiguous prior tag write is resolved before deciding. `publish github` reruns recognize an already-public release with the exact converged expected asset set as success, otherwise report indeterminate (exit 1) for manual reconciliation — never create or re-draft (invariant 1).
 
 ---
 
 ## 3. Domain model
 
-Pure package `internal/rel`. No I/O. Key vocabulary (I1):
+Types arrive with the slice that uses them (decision 10). No I/O in any of these.
+
+**Slice 1 (`internal/stage`, `internal/profile/goprof`):**
 
 ```go
-type Version struct{ Major, Minor, Patch uint64 }    // canonical stable subset (OP-01)
-func ParseVersion(s string) (Version, error)
-func (v Version) Compare(o Version) int
-func (v Version) Tag() Tag                            // "v1.2.3" — the only Tag constructor
-
-type Tag string       // exact, immutable once published (invariant 11)
-type Digest string    // "sha256:<64 lowercase hex>"; ParseDigest is the only constructor
-type Channel string   // "latest" | "1" | "1.2"
-func ChannelsFor(v Version) []Channel
-
-type AssetName string // flat, no separators, closed-set member
-
-// ChecksumSet is the *claim* parsed from checksums.txt: names and digests only.
-// Strict grammar; duplicates and control self-listing rejected. (GR-10 grammar half)
+// stage: ParseChecksums parses the checksums.txt claim — strict grammar,
+// duplicates and control self-listing rejected. Verification streams each
+// listed payload through SHA-256 against fs.FS and requires a nonempty
+// regular checksums.txt.sigstore.json. (PP-06)
 func ParseChecksums(r io.Reader) (ChecksumSet, error)
+func VerifyBundle(fsys fs.FS, claim ChecksumSet) error
 
-// Bundle is the *proven*, closed, signed asset set. It is constructed only by
-// reconciling a ChecksumSet against a BundleScan (streamed hashes, regular files,
-// no unlisted entries) — never from checksum bytes alone. (invariant 7)
-func NewBundle(claim ChecksumSet, scan BundleScan) (Bundle, error)
-
-// CanonicalBinary carries what OB-09..OB-11 need: common program identity,
-// platform, confined dist-relative source path, digest, executable-verified.
-type CanonicalBinary struct{ Program Name; Platform Platform; Path RelPath; SHA256 Digest }
-
-// Manifest is the profile→engine handoff (§6) with stage-scoped projections.
-type Manifest struct{ Release Release; Bundle Bundle; Binaries []CanonicalBinary }
-func (m Manifest) AssetsProjection() AssetsView   // validated by publish github
-func (m Manifest) ImageProjection()  ImageView    // validated by image build / publish oci
-
-type ChannelState struct{ Exists bool; Digest Digest; Version Version }
-type TagPlan struct{ Exact ExactAction; Advance []Channel; Hold []Channel }
-func PlanTags(v Version, d Digest, cur map[Channel]ChannelState) (TagPlan, error)
-
-type Receipt struct{ … }   // publication receipt: versioned, immutable, digests + subjects
+// goprof: pure parse + pure selection over GoReleaser artifacts.json.
+// Exactly one Linux Binary per amd64/arm64; dist/-relative confined path;
+// regular executable file verified against fs.FS metadata. (PP-07/08)
+func ParseArtifacts(r io.Reader) ([]Record, error)
+func SelectBinaries(recs []Record) ([]CanonicalBinary, error)
 ```
 
-**Immutable facts vs mutable intent.** `Digest`, `Tag`, `Bundle`, `Manifest`, exact index *bytes* (retained verbatim, never re-marshaled — OP-06 hashes original bytes), `Receipt`: facts. Channel targets, draft state, registry tag map: intent/state, touched only through plans computed pure and applied from fresh remote reads.
+**Slice 3 (`internal/rel`, created when types first cross use cases):** `Version` (canonical stable subset, OP-01) with `ParseVersion`/`Compare`/`Tag()`; `Tag`; `Digest` (`ParseDigest` sole constructor); `Channel` + `ChannelsFor`; `ChannelState`; `TagPlan` from pure `PlanTags(v, d, cur)` — absent→create, same→accept, differ→error; monotonic line-scoped channels (invariants 11–12). `OCIPrepareResult`: versioned, immutable; digests, tag-plan inputs, attestation subjects, `authoritative` flag — an OCI-publication handoff, not a general protocol.
 
-**Enforced by types:** digest grammar, canonical version form, tag prefix, asset-name flatness, channel derivation, receipt immutability. **Runtime checks:** channel monotonicity/line scope (registry reads), exact-tag immutability (resolve), byte-identity (FS), draft existence and tag↔commit binding (GitHub + git), closed remote asset set (Releases API).
+**Slice 4/5:** `Bundle` constructed only by reconciling a `ChecksumSet` against a real directory scan (closed set, regular files, no unlisted entries — GR-10, invariant 7); OCI layout values retaining exact `index.json` bytes verbatim (OP-06 hashes original bytes; invariants 5–6).
+
+Facts (`Digest`, `Bundle`, exact index bytes, `OCIPrepareResult`) are values. Channel targets, draft state, and the registry tag map are intent, touched only through plans computed pure and applied from fresh remote reads.
 
 ---
 
 ## 4. Ports
 
-Ports are narrow, use-case-shaped interfaces declared in the consuming package (I2); one concrete adapter may implement several (A2 is about interface purpose, not package count). Mockery generates every mock into `internal/adapter/<name>/mocks/` (T2/T3). Error contracts (classified errors: absent vs retryable vs auth vs malformed vs ambiguous-write) are defined **with the slice that needs them**, not up front (review finding 9).
+**Rule resolution (binding, from the adjudicated reviews):** A1/A2 win at remote, subprocess, credential, and irreversible-mutation boundaries — call order, short-circuiting, retry classification, and ambiguous writes are business behavior there; keep narrow consumer-owned ports with mockery mocks (T3). R1/R3 win for local deterministic plumbing — `fs.FS`/`io.Reader`/`io.Writer` are the boundary, tested on `t.TempDir()`/`fstest.MapFS`. A3 applies at use-case boundaries, not per type. T3 stays binding for every adapter that survives; the simplification is fewer adapters, not skipped mocks.
 
-| Port (declared in) | Responsibility | Kind | Concrete adapter | Test double | Replaces |
-|---|---|---|---|---|---|
-| `profile.Profile` | Produce a `Manifest` for a tagged release | X | `goprof` (GoReleaser + selection) | mockery + fixtures | PP-05, PP-07/08 |
-| `assets.BundleScanner` | Enumerate a dist dir into regular-file entries with streamed SHA-256; reject symlinks/dirs/unlisted | F | `bundlefs` | real `t.TempDir()` (+ generated mock) | PP-06, GR-10 closure half |
-| `goprof.ArtifactsReader` | Read+parse `artifacts.json`, confine `dist/`-relative paths, verify executable bit; selection itself is a pure function over records | F | in `goprof` | temp-dir fixtures | PP-07/08, OB-09 read half |
-| `manifest.Store` | Persist/load the versioned release manifest | F | `manfs` | temp dir | new (decision 3) |
-| `assets.BlobVerifier` | Sigstore bundle verify over a blob, exact identity+issuer | X | `cosign` exec | mockery | GR-11 |
-| `puboci.Signer` | Keyless recursive sign of digest-pinned refs (index + both platforms) | X+R | `cosign` exec | mockery | OP-15 |
-| `image.APKBuilder` | melange keygen/compile/build of signed APK repos | X | `melange` exec | mockery | OB-12–OB-15 |
-| `image.Composer` | apko lock/build of two-platform layout + SBOMs | X | `apko` exec | mockery | OB-16/17 |
-| `image.LayoutSource` | Parse on-disk OCI layout into domain values, retaining exact index bytes | F | `layout` | temp dirs | OB-18–21, OP-05–07 read half |
-| `puboci.StateReader` | Resolve tags, fetch version annotations | R | `reg` (oras-go v2) | in-memory registry + mockery | OP-10/12 reads |
-| `puboci.ContentPusher` | Push blobs/manifests by digest, verify resolution | R | `reg` | in-memory registry | OP-13/14 |
-| `puboci.TagCommitter` | Apply planned tags serially, verify each | R | `reg` | in-memory registry | OP-19 |
-| `pubgh.DraftFinder` | Paginated draft-by-tag search with poll budget (24×5s preserved) | R | `ghrel` (go-github) | stateful fake + mockery | GR-06 |
-| `pubgh.AssetReader` | List assets, digests, states (convergence poll 12×1s preserved) | R | `ghrel` | stateful fake | GR-14/16/17 |
-| `pubgh.AssetReplacer` | Replace/upload *expected* assets only, clobber semantics | X | `ghup` (`gh release upload --clobber`) | mockery + stateful fake | GR-15, invariant 10 |
-| `pubgh.Publisher` | Undraft + final-state fetch | R | `ghrel` | stateful fake | GR-18 |
-| `pubgh.RefResolver` | Tag → commit in the checkout | X | `gitx` (git subprocess) | mockery | GR-07 |
-| `verify.ArtifactMeta` | Pre-download Actions artifact metadata tuple (ID, expiry, run, digest) | R | `ghact` (go-github) | mockery | OB-06/GR-05/OP-03 |
-| `cli.Notifier`/`cli.Outputs` | Actions detection, `GITHUB_OUTPUT`, annotations, summary | env | `actenv` | in-memory recorder | scattered output writes |
-| `clock` (later slices) | Time/sleep for poll budgets | — | real | fake | GR-06/16 loops |
+**Local plumbing via stdlib (no custom port, no adapter package, no mock):** dist scan/checksum verification and `artifacts.json` reading (`os.DirFS` at the composition edge, slice 1); OCI layout parsing (slice 5) as package functions over `fs.FS` — exact-byte retention is the load-bearing decision, not the interface; a custom port appears only if the image engine demonstrably needs to mock failure ordering. Poll sleeping is an injected `sleep(ctx, d)` function; no `internal/clock`. **Trigger for shared `internal/execx`: two subprocess adapters repeating meaningful plumbing beyond `exec.CommandContext` setup.**
 
-Shared subprocess plumbing (arg building, capture, mise-path assertion per PP-04/OB-05) lives in unexported `internal/execx` — used *by* exec adapters, not a port (a generic Runner would violate A2).
+Genuine ports (declared in the consumer package, I2; mockery mocks in `internal/adapter/<name>/mocks/`; classified errors defined with the slice that needs them):
 
-**Deliberately not ports (residual YAML; CLI verifies results):** checkout, mise install + tool-path proofs, QEMU/binfmt, artifact upload/download transport (decision 13), `actions/attest` execution (subjects from the receipt; success observed by the workflow, `verify` re-checks URL outputs are non-empty — never represented as "attestation succeeded" by the CLI), `actions/create-github-app-token` (decision 8). Native `reg` credentials are passed in memory to the client and never persisted, which intentionally obsoletes OP-09/OP-20 login/logout.
+| Port (consumer) | Responsibility | Adapter | Slice | Replaces |
+|---|---|---|---|---|
+| `pubgh.ArtifactMeta` | Pre-download Actions artifact metadata tuple (ID, expiry, run, digest) | `ghact` (go-github) | 2 | OB-06/GR-05/OP-03 |
+| `puboci.StateReader` | Resolve tags, fetch version annotations | `reg` (oras-go v2) | 3 | OP-10/12 reads |
+| `puboci.ContentPusher` | Push blobs/manifests by digest, verify resolution | `reg` | 3 | OP-13/14 |
+| `puboci.TagCommitter` | Apply planned tags serially, verify each | `reg` | 3 | OP-19 |
+| `puboci.Signer` | Keyless recursive sign of digest-pinned refs | `cosign` exec | 3 | OP-15 |
+| `pubgh.ReleaseReader` | Draft-by-tag search (24×5s budget) + asset list/digest/state reads (12×1s) | `ghrel` (go-github) | 4 | GR-06, GR-14/16/17 |
+| `pubgh.AssetReplacer` | Replace/upload *expected* assets only, clobber semantics | `ghup` (`gh release upload --clobber`) | 4 | GR-15, invariant 10 |
+| `pubgh.Publisher` | Undraft + final-state fetch | `ghrel` | 4 | GR-18 |
+| `pubgh.RefResolver` | Tag → commit in the checkout | `gitx` (git subprocess) | 4 | GR-07 |
+| `pubgh.BlobVerifier` | Sigstore bundle verify, exact identity+issuer | `cosign` exec | 4 | GR-11 |
+| `image.APKBuilder` | melange keygen/compile/build of signed APK repos | `melange` exec | 5 | OB-12–15 |
+| `image.Composer` | apko lock/build of two-platform layout + SBOMs | `apko` exec | 5 | OB-16/17 |
+| `cli` Actions runtime seam | Actions detection, `GITHUB_OUTPUT`, annotations, summary — one interface | `actenv` | first CLI-produced output (slice 2) | scattered output writes |
 
-Nothing side-effecting remains in `internal/rel` or the engines.
+`ReleaseReader` merges rev-2's `DraftFinder`+`AssetReader`: both are read-only observations of the candidate release through one adapter. `AssetReplacer` and `Publisher` stay separate — expected-name replacement is recoverable while draft; undrafting is the irreversible visibility transition (invariants 9–10).
+
+**Deliberately not ports (residual YAML; CLI verifies results):** checkout, mise install + tool-path proofs (PP-04/OB-05), QEMU/binfmt, artifact transport (decision 13), `actions/attest` (subjects from `OCIPrepareResult`; success observed by the workflow, never claimed by the CLI), `actions/create-github-app-token` (decision 8). Native `reg` credentials live in memory and are never persisted, intentionally obsoleting OP-09/OP-20 login/logout.
 
 ---
 
 ## 5. Package layout
 
-Extends the template's conventions (thin `main`, `internal/cli` wiring, injected streams/Viper). **Only slice-1 packages are created in slice 1**; the rest land with their slice. Every package gets `doc.go` (D4).
+Extends the template (thin `main`, injected streams/non-global Viper; template-conventions §2). Packages are created with their slice; every surviving package gets `doc.go` (D4); 1000-line file cap (R2).
 
 ```
-cmd/release-cli/          entrypoint: signals, streams, linker vars incl. protocol/commit, exit code
-internal/cli/             Cobra tree, flag/env binding, --json envelope, actenv wiring        [slice 1]
-internal/rel/             PURE CORE: Version/Tag/Digest/Channel/ChecksumSet/Bundle/Manifest/plans [slice 1]
-internal/profile/         Profile port + registry + manifest schema                            [slice 1]
-internal/profile/goprof/  Go profile: selection (pure) + ArtifactsReader + GoReleaser (slice 6) [slice 1, + mocks/]
-internal/stage/assets/    engine: stage-1 orchestration                                        [slice 1]
-internal/adapter/bundlefs/ dist-dir scanner                                                    [slice 1, + mocks/]
-internal/adapter/manfs/   manifest store                                                       [slice 1, + mocks/]
-internal/adapter/actenv/  Actions runtime env                                                  [slice 1, + mocks/]
-internal/verify/          handoff/bundle verification engines                                  [slice 2]
-internal/adapter/ghact/   Actions artifact metadata                                            [slice 2, + mocks/]
+cmd/release-cli/          entrypoint: signals, streams, linker vars (version, commit, protocol) [slice 1]
+internal/cli/             Cobra tree, flag/env binding, --json envelope, exit mapping           [slice 1]
+internal/stage/           stage orchestration: checksum verification + bundle checks over fs.FS [slice 1]
+internal/profile/goprof/  ParseArtifacts + pure selection; GoReleaser invocation in slice 6     [slice 1]
+internal/adapter/ghact/   Actions artifact metadata                                  [slice 2, + mocks/]
+internal/adapter/actenv/  Actions runtime seam                                       [slice 2, + mocks/]
+internal/rel/             pure core: Version/Tag/Digest/Channel/TagPlan/OCIPrepareResult        [slice 3]
 internal/stage/puboci/    prepare/finalize engines                                             [slice 3]
-internal/adapter/reg/     oras-go v2 (implements StateReader/ContentPusher/TagCommitter)       [slice 3, + mocks/]
-internal/adapter/cosign/  cosign exec (sign, verify-blob)                                      [slice 3, + mocks/]
-internal/stage/pubgh/     GitHub publish engine                                                [slice 4]
-internal/adapter/ghrel/   go-github reads/undraft                                              [slice 4, + mocks/]
-internal/adapter/ghup/    gh release upload --clobber                                          [slice 4, + mocks/]
-internal/adapter/gitx/    git subprocess                                                       [slice 4, + mocks/]
-internal/stage/image/     image build engine                                                   [slice 5]
-internal/adapter/melange/ + internal/adapter/apko/ + internal/adapter/layout/                  [slice 5, + mocks/]
-internal/config/          release.toml (first durable knob)                                    [~slice 3]
-internal/execx/           shared subprocess plumbing                                           [with first exec adapter]
-internal/clock/           poll clock                                                           [slice 2/4]
-e2e/                      testscript .txtar system tests + stateful fakes
+internal/adapter/reg/     oras-go v2 (StateReader/ContentPusher/TagCommitter)        [slice 3, + mocks/]
+internal/adapter/cosign/  cosign exec (sign, verify-blob)                            [slice 3, + mocks/]
+internal/stage/pubgh/     GitHub publish engine (incl. handoff/bundle verification)             [slice 4]
+internal/adapter/ghrel/ ghup/ gitx/                                                 [slice 4, + mocks/]
+internal/stage/image/     image build engine + layout functions                                 [slice 5]
+internal/adapter/melange/ apko/                                                     [slice 5, + mocks/]
 .mockery.yml              per-interface config emitting into adapter mocks/ (T2/T3)
 ```
 
-`cmd/release-mvp` (placeholder greet CLI) is deleted when slice 1 makes `release-cli` the repo's release artifact. Names are prototyping candidates (§12).
+No `internal/profile` parent package (a directory may hold only the `goprof` child), no `internal/verify` catch-all (`verify handoff`/`verify bundle` live with their consuming use cases), no `manfs`, no `clock`, no `execx`, no `e2e`. **Trigger for any additional split: measured size/cohesion pressure, not symmetry.** `cmd/release-mvp` is deleted when slice 1 makes `release-cli` the repo's release artifact.
 
 ---
 
-## 6. Profile abstraction
+## 6. Profile
 
-**Mechanism: compiled-in Go interface + per-profile config section. Not plugins, not declarative step lists.**
+**Mechanism: direct dispatch on `--profile go` to the `goprof` package.** Ecosystem knowledge — GoReleaser schema (`type=Binary`, `goos`/`goarch`/`path`), archive/SBOM naming, canonical-binary selection with path confinement and executable checks, eventually the GoReleaser invocation (PP-05, slice 6) — ends at `goprof`'s returned staged facts. Everything downstream (checksum closure, packaging, layout verification, publication, signing, channel policy) is ecosystem-neutral per the inventory. When a second profile lands (decision 2's trigger), the interface is extracted from `goprof`'s existing shape without changing the command surface.
 
-```go
-type Profile interface {
-    Name() rel.ProfileName
-    // Stage builds/verifies the ecosystem's release assets and returns the
-    // complete Manifest. In slices 1–5 it verifies GoReleaser output already
-    // produced by YAML (PP-05 stays residual); slice 6 moves the invocation in.
-    Stage(ctx context.Context, r rel.Release, dist Dir) (rel.Manifest, error)
-}
-```
-
-**The profile owns** exactly the inventory's Go-specific set: toolchain invocation (eventually), archive/SBOM naming, `artifacts.json` schema knowledge, canonical-binary selection with path confinement and executable checks (PP-05/07/08, OB-09, OB-10's input half). **The engine owns** tag gating, checksum/bundle verification, packaging, layout verification, publication, signing subjects, channel policy — all marked ecosystem-neutral by the inventory.
-
-**The seam is the release manifest** (decision 3): one logical `Manifest`, serialized once, **copied into both existing artifacts** (`release-assets` and `oci-build-inputs` keep their current disjoint payloads; PP-09/PP-10 shapes and outputs unchanged). Each downstream stage validates only its projection — `publish github` requires the bundle files it references to exist in its download; `image build`/`publish oci` require the binaries/layout side. Missing files outside the active projection are structurally validated but not resolved. This keeps invariant 4's per-handoff independence and avoids shipping archives to jobs that don't need them.
-
-**Image seam contract v1 is exactly today's:** one common static ELF per {linux/amd64, linux/arm64}, one package per arch, two manifests, one entrypoint, user 65532 (invariant 6, OB-09–21). A profile that cannot meet it may disable the image stages via config; a profile needing a *different* image input shape requires a new manifest projection version and image-engine work — that is future evidence-driven design, not a current promise. A Rust profile that produces two static Linux binaries plugs in with zero engine changes; that is the honest portability claim.
-
-Why not declarative-only profiles: staging needs conditional logic, tool-schema parsing, and error judgment — YAML-encoded steps rebuild a worse bash. Why not plugin binaries: distribution and skew cost with no third-party-profile requirement.
+**Image seam contract v1 is exactly today's:** one common static ELF per {linux/amd64, linux/arm64}, one package per arch, two manifests, one entrypoint, user 65532 (invariant 6, OB-09–21). A profile that cannot meet it disables the image stages; a different image input shape is future evidence-driven design, not a current promise. A Rust profile producing two static Linux binaries plugs in with zero engine changes — that is the honest portability claim.
 
 ---
 
 ## 7. Configuration and org portability
 
-**Slice 1: flags + env only** (`RELEASE_*`, template-style injected non-global Viper). **`release.toml` is introduced with the first durable knob** — expected at slice 3 (registry override) — with precedence flag > env > file > derived default. `config show`/`config validate` land with the file, and `config show` renders only effective non-secret values (decision 9).
+**Flags + env (`RELEASE_*`, template-style injected Viper) + derived defaults. No config file** (decision 17 and its trigger). Derived defaults do the portability work: registry `ghcr.io/<owner>/<repo>` from `GITHUB_REPOSITORY`; signing identity `<repo>/.github/workflows/go-pre-publish.yml@<ref>` from context; channel policy = today's exact/minor/major/latest monotonic rules; CLI distribution repo from `github.action_repository`. Nothing names `meigma`.
 
-**Derived defaults do the portability work:** registry defaults to `ghcr.io/<owner>/<repo>` lowercased from `GITHUB_REPOSITORY` (git remote fallback); signing identity defaults to `<repo>/.github/workflows/go-pre-publish.yml@<ref>` from context; channel policy defaults to today's exact/minor/major/latest monotonic rules; the CLI distribution repo derives from `github.action_repository`. Nothing names `meigma`.
+**A second org's full adoption delta:** install the GitHub App; set the client-ID variable and private-key secret consumed by the *YAML* token action (actions-constraints §3). That is the whole delta — credential-level changes only, as required.
 
-**A second org's full adoption delta:** install the GitHub App on the org; set `RELEASE_APP_CLIENT_ID` (Actions variable) and `RELEASE_APP_PRIVATE_KEY` (Actions secret) — consumed by the *YAML* token action, never the CLI; optionally:
-
-```toml
-# release.toml — usually empty
-[oci]
-registry = "ghcr.io/otherorg/tool"   # only if not the repo's own GHCR path
-```
-
-**Validation is fail-fast:** every command validates inputs, env, manifest schema, and (for the selected profile) tool availability before any side effect; sentinel `ErrConfig`, exit 2 (E1).
+**Validation is fail-fast:** every command validates inputs, env, and tool availability before any side effect; sentinel `ErrConfig`, exit 2 (E1).
 
 ---
 
-## 8. CI integration shape
+## 8. CI integration and the one-version contract
 
-**Recommendation: the layered shape — reusable workflows → composite `setup-release-cli` → CLI** — evaluated against, and agreeing with, the constraints doc: job-scoped permissions, environments, concurrency, `needs`, matrices, and workflow outputs exist only in reusable workflows; a composite is the only supported same-job bridge for a caller-built binary and for orchestration-owning consumers.
+**Layered shape:** reusable workflows own the job graph, `needs` (registry-before-release gate, invariant 3), concurrency (invariants 13/16), timeouts, environment gates, artifact transport, permissions, token minting, the `actions/attest` steps, and prepare→attest→finalize sequencing. The composite `setup-release-cli` owns CLI acquisition/verification and exposes `cli-path`. The CLI owns decisions, verification, and side effects. Callee jobs declare least privilege exactly as today; external callers grant the same ceiling; attestations attach to the consumer repo (actions-constraints §1–2).
 
-**Layer ownership.** Reusable workflows own the job graph, `needs` (including the registry-before-release gate, invariant 3), concurrency groups (invariants 13/16), timeouts, environment gates, artifact transport, permissions declarations, the token-minting and `actions/attest` steps, and the prepare→attest→finalize sequencing. The composite owns CLI acquisition/verification and exposes `cli-path`. The CLI owns decisions, verification, and side effects via ports.
+**One release unit.** `release-please-config.json:11-16` defines a single root package with `include-component-in-tag: false`: the workflows, the composite action, and the CLI already version together under one tag. The consumer holds exactly one pin — the workflow `@FULL_SHA` — which transitively pins action source (`$/`, same-commit) and the CLI version stamped into `action.yml` (release-please `extra-files`).
 
-**Permissions/OIDC:** callee jobs declare least-privilege exactly as today; the external caller's call job must grant the same ceiling (callee can never elevate — documented constraint). Attestations attach to the *consumer* repo (caller context), as desired. Consumer copy-paste surface: one caller stub of four `uses:` jobs, `permissions`, two credential mappings, optional `cli-version`.
+**`cli-version` does not exist. Independent CLI pinning is explicitly not supported.** Supporting it would turn every YAML↔binary touchpoint into a versioned public API with a support window — verbs/flags, `GITHUB_OUTPUT` names, the `--json` envelope and per-command `result`, the `OCIPrepareResult`, the prepare→attest→finalize sequencing, exit codes, staged-artifact layout — plus a workflow-ref × CLI-version CI matrix to keep the promise non-decorative. The failure asymmetry decides it: newer workflow + older CLI fails loudly (unknown flag, exit 2, before side effects); **older workflow + newer CLI can fail silently** (a renamed output reads empty and a gating step proceeds). Consequence: outputs and the prepare-result schema are internal to the release unit, and renames are release-unit-atomic. **Revisit trigger: the first adopter needing genuinely different release cadences for binary versus workflows — the honest response then is a supported N−1 window with a real compat matrix, not an unproven input.**
 
-**Dogfood and skew, end to end:**
+**`cli-path` remains, documented as an unsupported escape hatch: "you supply the binary, you own the pairing."** It is the dogfood mechanism — this repo's `release.yml` builds `./cmd/release-cli` from the branch checkout and passes its path (actions-constraints §5) — and it also covers regression bisection, vendored/mirrored binaries, and air-gapped orgs, which is precisely why no compat promise is needed.
 
-```yaml
-# inside the reusable workflows (all consumers execute):
-- uses: $/.github/actions/setup-release-cli        # $/ = same-commit action source
-  with:
-    version:  ${{ inputs.cli-version }}            # optional consumer override
-    cli-path: ${{ inputs.cli-path }}               # dogfood: path to a caller-built binary
-```
+**Mismatch guard: a stamped integer, not a protocol system.** The release unit stamps one integer in `action.yml` and (via linker var) in the binary, reported by `version --json`. On the **installed path** the composite asserts equality at setup and fails closed before any stage command runs. No ranges, no negotiation, no deprecation policy. On the **`cli-path` path** it does not hard-fail: it reports the binary's version and protocol integer in step outputs and emits a warning annotation on mismatch, so debugging stays possible but visibly off-contract. (A dogfood binary built from the same commit matches the stamp and stays quiet.)
 
-- **Dogfood:** this repo's `release.yml` builds `./cmd/release-cli` from the branch checkout in a prior step and passes `cli-path`. Explicit, visible source; no owner-guard magic. Because the binary is job-local, each callee job that needs it builds or downloads it — the workflow input threads through.
-- **External default:** `action.yml` carries a stamped default CLI version (release-please `extra-files`), so an external caller pinning the workflow `@FULL_SHA` transitively pins action source (`$/`) and default CLI version. **This aligns source pins; it does not by itself prove compatibility** — a caller can override `cli-version` with a stale binary.
-- **Protocol handshake (the actual skew defense):** the CLI stamps a `protocol` integer and source `commit` via linker vars, reported by `version --json`. The workflows stamp their required protocol; `setup-release-cli` asserts equality **before any stage command runs** and fails closed on mismatch, including explicit handling of a blank `version` input (blank ⇒ stamped default; the action implements this, never relying on metadata defaults after an explicitly-passed empty value).
-- **Bootstrap integrity (released path):** download archive + `checksums.txt`; verify sha256; `gh attestation verify --repo <derived from github.action_repository>` against the pinned signer workflow; then the protocol check. Binding the binary to the exact workflow commit via the provenance predicate's source commit is a slice-1-adjacent experiment (§12) — until proven, the claim is "signed, version-pinned, protocol-compatible", not "same-commit".
+**Bootstrap integrity (installed path):** download archive + `checksums.txt`; verify sha256; `gh attestation verify --repo <derived from github.action_repository>` against the pinned signer workflow; then the integer check. The claim is "signed, release-unit-pinned, stamp-matched"; same-commit binding via the provenance predicate stays an experiment (§12).
 
 ---
 
@@ -250,86 +181,95 @@ registry = "ghcr.io/otherorg/tool"   # only if not the repo's own GHCR path
 
 | Invariant (inventory §6) | Enforced by | Local test |
 |---|---|---|
-| 1 Draft upstream, publisher never creates | `DraftFinder` returns `ErrNoDraft`; engine has no create path; reruns never re-draft | mock absent/non-draft → exit 1 |
-| 2 Tag/run binding, tag→`github.sha` | `verify` engine + `RefResolver`; `rel.Release` constructor | unit + gitx temp-repo test |
-| 3 Registry-before-release gate | **residual YAML** caller `needs` + `require-oci-image` input (unchanged) | workflow lint only |
-| 4 Two-coordinate handoff | split ownership: `verify handoff` (metadata tuple, pre-download) / `download-artifact` (transport digest) / CLI content commands | unit digest normalization; `ghact` mock; content e2e |
-| 5 No-rebuild byte identity | `stage/image` engine compares extracted layer bytes' digest to manifest `CanonicalBinary` | temp-dir layout with mutation → fail |
-| 6 Canonical platform/runtime shape | `rel` layout validation over `LayoutSource` (exact index bytes retained) | table-driven units on synthetic layouts |
-| 7 Closed, signed bundle | `ParseChecksums` (grammar) + `NewBundle` reconciliation over `BundleScanner` + `BlobVerifier` identity/issuer | pure grammar units; scanner temp-dir tests; cosign mocked |
-| 8 Attestation subject shape | receipt carries subjects; YAML `actions/attest` executes; workflow sequencing `verify bundle` → attest → upload (GR-13) and prepare → attest → finalize (OP-16–18) | unit on subject derivation; live rehearsal for attest itself |
-| 9 Draft-until-verified | `pubgh` engine order verify→replace→converge→publish; `--no-undraft` | engine mock call-order test; stateful fake e2e |
-| 10 Converge only over expected names | `AssetReplacer` clobber contract: replace expected, refuse unexpected, never delete unexpected | stateful fake: 422, delete-success/upload-fail, duplicates, unexpected names |
-| 11 Exact tags immutable | `rel.PlanTags` pure: absent→create, same→accept, differ→error | pure unit table |
-| 12 Channels monotonic, line-scoped | `rel.PlanTags` over fresh `StateReader` reads at both prepare and finalize | pure unit table |
-| 13 Channel mutation serialized | **residual YAML** concurrency (reusable-workflow consumers only) + serial `TagCommitter`; direct-CLI users on shared targets are a documented single-writer limitation | e2e serial-order assert; docs |
-| 14 Trust metadata before public tags | **two-phase protocol**: prepare (push/verify/sign) → YAML attest → finalize (fresh re-resolve, refuse drift, tag) | engine order tests; e2e across both phases with in-memory registry |
-| 15 Verification-only writes nothing | `--dry-run` + `plan tags`/`image verify` short-circuit before mutating ports | e2e asserting zero registry mutations |
+| 1 Draft upstream, publisher never creates | `ReleaseReader` returns `ErrNoDraft`; no create path; reruns never re-draft | mock absent/non-draft → exit 1 |
+| 2 Tag/run binding | `pubgh` engine + `RefResolver` | unit + gitx temp-repo test |
+| 3 Registry-before-release gate | **residual YAML** caller `needs` + `require-oci-image` (unchanged) | workflow lint |
+| 4 Two-coordinate handoff | three-owner split (decision 13) | digest-normalization unit; `ghact` mock |
+| 5 No-rebuild byte identity | image engine compares extracted layer bytes to canonical binary digest | temp-dir layout mutation → fail |
+| 6 Canonical platform/runtime shape | layout validation functions (exact index bytes retained) | table-driven units on synthetic layouts |
+| 7 Closed, signed bundle | `ParseChecksums` grammar + directory-scan reconciliation + `BlobVerifier` identity/issuer | grammar units; `t.TempDir()` scans; cosign mocked |
+| 8 Attestation subject shape | `OCIPrepareResult` carries subjects; YAML attest executes; sequencing verify→attest→upload (GR-13) and prepare→attest→finalize (OP-16–18) | subject-derivation unit; live rehearsal |
+| 9 Draft-until-verified | `pubgh` order verify→replace→converge→publish; `--no-undraft` | engine call-order test |
+| 10 Converge only over expected names | `AssetReplacer` clobber contract: replace expected, refuse unexpected, never delete | mock: 422, delete-success/upload-fail, duplicates |
+| 11 Exact tags immutable | pure `PlanTags`: absent→create, same→accept, differ→error | pure unit table |
+| 12 Channels monotonic, line-scoped | `PlanTags` over fresh `StateReader` reads at prepare and finalize | pure unit table |
+| 13 Channel mutation serialized | **residual YAML** concurrency + serial `TagCommitter`; direct-CLI users on shared targets: documented single-writer limitation | serial-order assert; docs |
+| 14 Trust metadata before public tags | **two-phase protocol**: prepare (push/verify/sign) → YAML attest → finalize (fresh re-resolve, drift refusal, tag); result transported in the envelope, re-fed on stdin | engine order tests; in-memory registry across both phases |
+| 15 Verification-only writes nothing | `prepare --dry-run` non-authoritative result + `plan tags`/`image verify` | zero-mutation assertion |
 | 16 No-cancel concurrency | residual YAML (irreducible) | workflow lint |
-| 17 Producer publication disabled twice | residual YAML until slice 6; then `goprof` passes `--skip=publish` and asserts `release.disable: true` in config | goprof unit on invocation args |
+| 17 Producer publication disabled twice | residual YAML until slice 6; then `goprof` passes `--skip=publish` and asserts `release.disable: true` | goprof unit on invocation args |
 
 ---
 
 ## 10. Testing strategy
 
-**T1 layer 1 — unit (pure core).** Version ordering, tag/digest grammar, channel derivation, `PlanTags`, checksum grammar, bundle reconciliation logic, layout predicates, subject derivation. Zero I/O, sub-second. Invariants 6, 7, 11, 12 live here.
+**Layer 1 — pure unit.** Checksum grammar, artifact selection, path confinement predicates, version/tag/digest grammar, `PlanTags`, layout predicates, subject derivation. Zero I/O. Invariants 6, 7, 11, 12 live here.
 
-**T1 layer 2 — engine + adapter integration.** Engines against mockery mocks (T2/T3) for ordering, short-circuiting, dry-run, bounded retry decisions once each slice defines its classified errors. Adapters against real cheap substrates where they exist: `reg` against an in-memory registry (`go-containerregistry pkg/registry` via `httptest`), `bundlefs`/`manfs`/`layout`/`gitx` against `t.TempDir()`, `actenv` against temp output files. The GitHub fake must be **stateful** — pagination, delayed draft visibility, delayed asset digest convergence, expected-name replacement, duplicates, 429/5xx, ambiguous mutations — recorded rehearsal fixtures seed schemas but are not the behavior model.
+**Layer 2 — integration on cheap real substrates or mockery mocks.** Local file logic against `t.TempDir()`/`fstest.MapFS` (no custom fakes needed); `reg` against an in-memory registry (`go-containerregistry pkg/registry` via `httptest`); engines against mockery mocks for ordering, short-circuiting, dry-run, and classified-error decisions once each slice defines them. **Trigger for a reusable stateful GitHub fake: slice-4 tests demonstrating repeated pagination/eventual-consistency/clobber transitions beyond what focused mocks express.**
 
-**T1 layer 3 — system tests + live.** `e2e/` testscript/txtar drives the built binary through stage flows against the in-process fakes — this proves CLI wiring, plans, ordering, and local verification, **not** GHCR, Sigstore, Actions, or pinned-tool contracts. Genuine layer-3 lives in the existing cross-repo rehearsal: keyless signing, `actions/attest`, GHCR referrers/auth, QEMU/Docker melange/apko, GoReleaser 2.17.1's real `artifacts.json`. Known mock-passes-tool-fails gaps (cosign flags/recursion, melange arg order, apko path context, GoReleaser schema drift, clobber semantics) are covered by pinned-tool contract tests where cheap and by rehearsal otherwise.
+**Layer 3 — live.** The existing cross-repo rehearsal: keyless signing, `actions/attest`, GHCR referrers/auth, QEMU/Docker melange/apko, pinned GoReleaser 2.17.1's real `artifacts.json`. Known mock-passes-tool-fails gaps (cosign flags/recursion, melange arg order, apko path context, GoReleaser schema drift, clobber semantics) are covered by pinned-tool contract tests where cheap and by rehearsal otherwise.
 
-**The laptop answer:** `moon run test` runs layers 1–2 in seconds; `go test ./e2e` adds full-flow system tests in seconds more. The engineer validating a tag-policy or verification change runs one test instead of a 20-minute cross-repo rehearsal; the rehearsal shrinks from "the only validation" to "the final smoke".
+**The laptop answer:** `moon run test` runs layers 1–2 in seconds; the engineer validating a tag-policy or verification change runs one test instead of a 20-minute rehearsal, which shrinks to the final smoke.
 
 ---
 
 ## 11. Migration path
 
-Strangler pattern; workflow-input compatibility for consumers throughout. YAML burn-down from ~1650 lines shown per slice.
+Strangler pattern; workflow-input compatibility throughout. The four workflows total **145 + 445 + 482 + 569 = 1,641 lines** (inventory §2). Replaced-line figures below are the inventory's cited spans and are **upper bounds**: a few counted lines survive or are obsoleted rather than moved (GR-08's download step stays YAML per decision 13; OP-09/OP-20 login/logout are obsoleted by in-memory credentials; PP-05 shares its block with residual PP-04).
 
-1. **Slice 1 (one PR).** Contents, exactly: `internal/rel` (Version/Tag/Digest/ChecksumSet/Bundle/Manifest + projections), `profile`+`goprof` (pure selection + `ArtifactsReader`; GoReleaser stays YAML), `stage/assets` engine, `bundlefs`/`manfs`/`actenv` adapters + mocks, the `--json` envelope, `stage --profile go` replacing PP-06–PP-08's bash (~80 lines), manifest emission added to both residual uploads, and a minimal `setup-release-cli` (install+verify+protocol check; `cli-path` passthrough). Dogfood: `release.yml` builds the branch binary, passes `cli-path`. Validated by: unit tests, txtar, and a rehearsal run specifically confirming real pinned-GoReleaser `artifacts.json` shape and uploaded artifact contents. Replaces `cmd/release-mvp` as the release artifact. Everything else untouched.
-2. **Handoff verification:** `verify handoff` + `ghact` (+ classified-error model for it) replaces the four `getArtifact` script blocks (~150 lines). Transport digest stays with `download-artifact` (decision 13).
-3. **OCI publish:** `plan tags`, `publish oci prepare|finalize`, `reg`+`cosign` adapters, registry error taxonomy, `release.toml` introduction. Replaces OP-09–15, OP-19/20 (~450 lines); YAML keeps attest steps between the phases. **Acceptance gate: the scratch-GHCR parity spike** (digest push, tag resolve, referrers, partial-failure behavior) — not optional polish.
-4. **GitHub publish:** `publish github` with `ghrel`/`ghup`/`gitx`; token minting stays YAML. Replaces GR-05–GR-12, GR-14–GR-18 (~380 lines); **GR-13 (`actions/attest`) remains YAML**, sequenced verify → attest → upload. Stateful-fake e2e incl. clobber/rerun cases; rehearsal with `publish-release: false` first.
-5. **Image build:** `image build|verify` with `melange`/`apko`/`layout` replaces OB-08–OB-21 (~350 lines). Temp-dir verification e2e; rehearsal for real builds.
-6. **Prepublish completion:** `goprof` invokes GoReleaser (PP-05, ~50 lines; invariant 17 moves in); workflows collapse to thin shells; docs/reference contracts updated (D6).
+| Slice | Contents | Steps replaced | Cited spans | Lines |
+|---|---|---|---|---:|
+| 1 | `stage --profile go` | PP-06/07/08 — **3 logical checks** | `go-pre-publish.yml:88-119` | 32 |
+| 2 | `verify handoff` + `ghact` + `actenv` — the **three** metadata blocks | OB-06, GR-05, OP-03 | `go-oci-build.yml:106-141`, `publish-github-release.yml:129-164`, `publish-oci-image.yml:88-123` (36 each) | 108 |
+| 3 | `plan tags`, `publish oci prepare/finalize`, `reg`+`cosign`, registry error taxonomy. **Acceptance gate: scratch-GHCR parity spike** | OP-09–15, OP-19/20 | `publish-oci-image.yml:234-481`, `:511-569` | 307 |
+| 4 | `publish github`, `verify bundle` with `ghrel`/`ghup`/`gitx`; GR-13 attest stays YAML, sequenced verify→attest→upload | GR-06–12, GR-14–18 | `publish-github-release.yml:166-333`, `:341-482` | 310 |
+| 5 | `image build`/`image verify` with `melange`/`apko` | OB-08–21 | `go-oci-build.yml:150-436` | 287 |
+| 6 | `goprof` invokes GoReleaser; invariant 17 moves in; workflows collapse to thin shells; docs updated (D6) | PP-05 | `go-pre-publish.yml:74-86` | 13 |
+| — | **Residual** (28 steps: triggers, `workflow_call` interfaces, permissions, job graph, checkout, mise+tool proofs, QEMU, transport, token action, attest steps) | 28 of 70 | everything not cited above | 584 |
 
-**Irreducible residual YAML (~250–300 lines):** triggers, permissions, job graph/`needs`/concurrency/timeouts, environment gates, checkout, mise install + tool-path proofs, QEMU/binfmt, artifact transport, `actions/create-github-app-token`, `actions/attest` steps, the composite action, caller stubs.
+**Check: 32 + 108 + 307 + 310 + 287 + 13 = 1,057; 1,057 + 584 = 1,641.** Taking the named ranges contiguously (PP-05–08, GR-05–12 as single spans) gives 1,059 — the two-line delta is separator lines booked to residual. Headline, precisely: **42 of 70 logical steps migrate; upper bound ~1,059 of 1,641 lines (~64.5%).** The 584 residual is today's non-replaced line count, not the end-state size — the thin-shell workflows will be smaller after cutover.
+
+**Slice 1, concretely (one PR):** four production packages with co-located tests — `cmd/release-cli`, `internal/cli`, `internal/stage`, `internal/profile/goprof`. `os.DirFS(dist)` at the composition edge; `fs.FS`/`io.Reader` inward. Command: `stage --profile go --dist PATH [--json]`. Preserves PP-06 exactly (every `checksums.txt` payload hash + nonempty regular `checksums.txt.sigstore.json`) and PP-07/08 exactly (exactly one Linux `Binary` per amd64/arm64 from real GoReleaser JSON, `dist/`-relative path confinement, regular executable file). No persisted output; PP-09/PP-10 uploads untouched. The composite `setup-release-cli` ships in this PR **only if** the public reusable workflow cuts over in it; otherwise `release.yml` passes `cli-path` from a branch build. **Proof obligation:** four deliberate-mutation cases — bad checksum, missing architecture record, escaped path, cleared exec bit — each failing for the right observable reason, plus one rehearsal against pinned GoReleaser 2.17.1 confirming the real `artifacts.json` shape. Replaces `cmd/release-mvp` as the repo's release artifact.
 
 ---
 
 ## 12. Risks, unknowns, expected wrongness
 
-**Expect prototyping to invalidate:** the manifest projection schema (versioned, internal until slice 5); engine/package names (settle after slice 3); the receipt format for prepare/finalize; whether the stateful GitHub fake earns its keep versus more mock-driven engine tests.
+**Expect prototyping to invalidate:** package/engine names (settle after slice 3); the `OCIPrepareResult` field set; whether slice-4 mocks suffice or the stateful GitHub fake's trigger fires.
 
-**Load-bearing assumptions → cheap experiments, in order:**
-1. `$/` self-reference under external SHA-pinned callers on current runners (≥ 2.336.0) — scratch consumer repo, **before slice 1's action ships**.
-2. release-please can stamp `action.yml` (`extra-files`) — slice 1.
-3. Provenance predicate exposes a verifiable source commit to bind binary↔workflow commit — slice-1-adjacent spike; until proven, §8's claim stays "signed + protocol-compatible".
-4. `oras-go` v2 GHCR parity incl. referrers alongside cosign — slice-3 acceptance gate; fallback is the ORAS binary behind the same three narrow ports with all decisions staying pure.
-5. `sigstore-go` offline bundle verification (removes network TUF from GR-11's local path) — after slice 4.
-6. Absorbing `actions/attest` into the CLI (would collapse prepare/finalize to one command) — only if a `sigstore-go` + attestations-API spike is small and preserves permission/identity semantics.
-7. Native App-token minting — only if a spike shows a smaller exposure surface than the pinned action; the default stands (decision 8).
+**Load-bearing assumptions → cheap experiments, in order:** (1) `$/` self-reference under external SHA-pinned callers on runners ≥ 2.336.0 — scratch consumer repo before slice 1's action ships; (2) release-please stamps `action.yml` version + protocol integer via `extra-files` — slice 1; (3) `oras-go` v2 GHCR parity incl. referrers — slice-3 acceptance gate; fallback is the ORAS binary behind the same three ports; (4) provenance predicate exposes a verifiable source commit — later spike; until proven, §8's claim stays "signed + stamp-matched"; (5) `sigstore-go` offline bundle verification — after slice 4; (6) native App-token minting — only if a spike shows smaller exposure than the pinned action.
 
-**Considered and rejected:** verb-per-ecosystem CLI (user-rejected; multiplies contracts); declarative profiles (rebuilds bash in TOML); plugin-binary profiles (skew/distribution cost, no requirement); JavaScript/Docker action (Node bundle or Linux-only, no job-level gain — constraints §1); reusable-workflow-only delivery (loses same-job dogfood bridge); melange/apko via Go APIs (huge surface, zero contract gain); one combined producer artifact (breaks per-handoff independence, ships archives to jobs that don't need them — §13 F3/A6); single-command `publish oci` (cannot preserve invariant 14 — review finding 1).
+**Considered and rejected:** verb-per-ecosystem CLI (user-rejected); declarative/plugin profiles (rebuilds bash / skew cost); JS/Docker action (no job-level gain — constraints §1); single-command `publish oci` (cannot preserve invariant 14); supported `cli-version` input (silent-failure asymmetry, unbounded compat surface — §8); combined producer artifact (breaks per-handoff independence); prepare-result file (a persistence port with no reader beyond the same workflow run — the envelope already crosses that gap).
 
 ---
 
 ## 13. Review dispositions
 
-| Finding | Disposition | Note |
+**Correctness review** (all ten findings remain covered; narrowed fixes noted):
+
+| Finding | Disposition | Rev-3 status |
 |---|---|---|
-| 1 attestation-before-tags broken | **Accept** | Two-phase `prepare`/`finalize` + immutable receipt (§2, decision 4). |
-| 2 missing slice-1 FS ports | **Accept** | `BundleScanner`, `ArtifactsReader`, `manifest.Store`; no generic FS port (§4). |
-| 3 staging/two-artifact mismatch; `ParseChecksums` overreach; container-profile claim | **Accept** | One manifest, projection-validated, copied into both artifacts (decision 3); `ChecksumSet` vs scanner-built `Bundle`; `Asset.Size` dropped; image seam v1 = today's exact contract (§6). |
-| 4 service-surface ports | **Accept** | Narrow consumer ports, one concrete adapter each (§4, decision 6). |
-| 5 transport-digest ownership | **Accept** | Three-owner split (decision 13). |
-| 6 "safe to re-run" exit 3 | **Accept** | Removed; `mutations` status + per-command reconciliation (§2). |
-| 7 `$/` skew overclaim; hardcoded repo | **Accept** | Protocol handshake + stamped commit; repo derived from `github.action_repository`; same-commit binding demoted to experiment (§8). |
-| 8 App token one-shot/exposure | **Accept** | Token action stays YAML by default; `Secret` type; `config show` redaction (decisions 8–9). Note: with jobs ≤ 15-min timeouts, the 1-hour token makes mid-run expiry a residual, documented risk rather than a modeled state. |
-| 9 retry/error taxonomy | **Accept as scoped** | Defined per remote slice with the documented poll budgets (24×5, 12×1); no upfront framework — matches the review's own guidance. |
-| 10 clobber semantics | **Accept** | `gh release upload --clobber` retained behind `AssetReplacer`; go-github for reads/undraft (§4). |
-| Alt: keep ORAS binary | **Reject (with hedge)** | Native `oras-go` stands for testability, but the scratch-GHCR spike is promoted to slice-3 acceptance; the fallback keeps the same ports (§12.4). |
-| Alt: combined producer artifact | **Reject** | Projections preserve invariant-4 independence and download minimality (decision 3). |
-| Alt: no composite in slice 1 | **Partially reject** | The reusable workflows execute for external consumers too, so slice 1 needs the install path; the composite ships minimal (`cli-path` + install + protocol check). |
-| e2e naming overstates coverage | **Accept** | Renamed system tests; rehearsal is the true layer 3 (§10, decision 19). |
-| Slice-1 descoping (config file, package scaffold, magic `local`) | **Accept** | Flags/env only; slice-scoped packages; explicit `cli-path` (decisions 15, 18, 20). |
+| 1 attestation-before-tags | Accept | prepare/attest/finalize + `OCIPrepareResult` in the envelope (§2, decision 4). |
+| 2 slice-1 FS ports | **Accept, narrowed** | The concern was raw `os` calls inside business logic. Covered by stdlib boundaries: `fs.FS`/`io.Reader` at the composition edge, pure functions inward — a boundary exists and laptop testability holds; it is simply not bespoke (decision 5). |
+| 3 staging/two-artifact mismatch | **Accept, narrowed** | The concern was a cross-job contract whose referenced files are absent per artifact. Covered by not creating the contract: slice 1 persists nothing, artifacts stay byte-for-byte; the first reader serializes only its own projection (decision 3). `ChecksumSet` vs scanned `Bundle` split retained; image seam v1 = today's exact contract. |
+| 4 service-surface ports | Accept | Narrow consumer ports; `reg`/`ghrel` each implement several (§4). |
+| 5 transport-digest ownership | Accept | Three-owner split (decision 13). |
+| 6 "safe to re-run" exit 3 | **Accept, narrowed** | Substance kept: no generic safe-rerun promise anywhere; each mutating command reconciles from fresh state (§2). The stable `mutations` array and exit 3 are deferred to their trigger (decision 12) — they were reporting machinery, not the safety property. |
+| 7 skew | **Satisfied structurally** | `cli-version` is removed, so there is no supported skew path to defend (§8). The stamped-integer guard fails closed on the installed path; `cli-path` is explicitly off-contract with visible reporting. Replaces rev-2's protocol handshake and the consumer-selected-version ergonomics story. |
+| 8 App token/secrets | Accept | Token action stays YAML; `Secret` type (decisions 8–9). |
+| 9 retry/error taxonomy | Accept as scoped | Defined per remote slice with the 24×5/12×1 budgets; no upfront framework. |
+| 10 clobber semantics | Accept | `gh release upload --clobber` behind `AssetReplacer` (§4). |
+
+**Complexity review:**
+
+| Item | Disposition | Reason |
+|---|---|---|
+| Cut 1: manifest/projections/store from slice 1 | Accept | No slice-1 reader; trigger recorded (decision 3). |
+| Cut 2: profile interface/registry | Accept | One implementation; `goprof` boundary suffices (decision 2). |
+| Cut 3: JSON `phase`/`mutations`, exit 3 | Accept | No slice-1 mutation; finding-6 substance preserved (decision 12). |
+| Cut 4: `release.toml` + `config show`/`validate` | Accept | Zero observed consumers; evidence triggers (decision 17). |
+| Cut 5: `cli-version` + handshake | **Decided differently** | Stronger than the review's conditional defer: the input is removed permanently as unsupported, grounded in the one-release-unit fact, *and* a cheap stamped-integer guard is kept because the silent-failure asymmetry warrants a fail-closed check even without an override path (§8). |
+| Cut 6: testscript/`e2e` | Accept | Cobra tests + rehearsal cover the layers (decision 18). |
+| Cut 7: §11 arithmetic | Accept | Reconciled to exactly 1,641 with the check shown (§11). |
+| Collapses 1–7 (stdlib FS, four-package slice 1, `actenv` merge, `ReleaseReader`, injected sleep, deferred `execx`/`verify`, three layers) | Accept | Implemented throughout §§4–5, 10–11; §5.5 rule resolution carried as binding (§4). |
+| Keep-as-is list 1–11 | Accept | All retained: two-phase OCI, YAML job policy, bootstrap verification, three-owner handoff, strict bundle, exact-byte OCI, pure planner, registry port separation, replacer/publisher split, YAML token action, mockery/doc obligations. |
