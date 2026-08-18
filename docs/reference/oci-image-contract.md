@@ -1,6 +1,6 @@
 # OCI image contract
 
-This page defines the cross-repository contract for the reusable Go OCI builder and GHCR publisher at revision `052e8277da00bf6369093ed8736cf5d21195d843`.
+This page defines the cross-repository contract for the reusable Go OCI builder and GHCR publisher at revision `fb8c8098ff27968fb3070e928c00e925f38c698e`.
 
 For adoption steps, see [Configure OCI image publication](../how-to/configure-oci-images.md). The [GitHub Release contract](github-release-contract.md) defines the upstream GoReleaser producer and GitHub Release publisher. A complete consumer is available in the [Go release example](../../examples/go-release/).
 
@@ -26,11 +26,11 @@ The image builder consumes prebuilt GoReleaser binaries. Melange packages them w
 Consumers call both workflows at the same immutable revision:
 
 ```yaml
-uses: meigma/release/.github/workflows/go-oci-build.yml@052e8277da00bf6369093ed8736cf5d21195d843
+uses: meigma/release/.github/workflows/go-oci-build.yml@fb8c8098ff27968fb3070e928c00e925f38c698e
 ```
 
 ```yaml
-uses: meigma/release/.github/workflows/publish-oci-image.yml@052e8277da00bf6369093ed8736cf5d21195d843
+uses: meigma/release/.github/workflows/publish-oci-image.yml@fb8c8098ff27968fb3070e928c00e925f38c698e
 ```
 
 Moving branches and tags are not supported workflow references.
@@ -211,7 +211,7 @@ The publisher signs the index and both platform manifests with Cosign keyless si
 
 | Field | Value |
 | --- | --- |
-| Certificate identity | `https://github.com/meigma/release/.github/workflows/publish-oci-image.yml@052e8277da00bf6369093ed8736cf5d21195d843` |
+| Certificate identity | `https://github.com/meigma/release/.github/workflows/publish-oci-image.yml@fb8c8098ff27968fb3070e928c00e925f38c698e` |
 | Certificate OIDC issuer | `https://token.actions.githubusercontent.com` |
 | Subject | Digest-pinned image or platform manifest. |
 
@@ -253,6 +253,8 @@ The current boundary is deliberately split:
 - `go-oci-build.yml` packages and composes the image without registry credentials;
 - `publish-oci-image.yml` does not check out consumer source and writes only to the caller's GHCR package and attestation store; and
 - `publish-github-release.yml` waits for image publication but uses a separate short-lived Release App token for release mutation.
+
+The privileged publisher implements validation and orchestration with the pinned `actions/github-script` action. It invokes ORAS and Cosign with explicit argument arrays through `@actions/exec`; release metadata is not interpolated into shell programs.
 
 The workflow artifact is temporary transport, not a public distribution channel. The OCI digest, registry content, Cosign identity, and attestation identities form the public verification boundary.
 

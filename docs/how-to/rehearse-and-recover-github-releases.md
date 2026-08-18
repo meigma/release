@@ -287,7 +287,7 @@ If the repository does not need a correction, rerun the complete top-level workf
 For the documented current revision, the publisher requires a nonempty `checksums.txt`, the exact closed payload list, matching payload hashes, a regular Cosign bundle file, issuer `https://token.actions.githubusercontent.com`, and this certificate identity:
 
 ```text
-https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843
+https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@fb8c8098ff27968fb3070e928c00e925f38c698e
 ```
 
 For an upgrade rehearsal, replace the current-revision identity with the target value described in [Upgrade GitHub Release workflows](upgrade-github-release-workflows.md).

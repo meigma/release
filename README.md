@@ -12,4 +12,4 @@ This repository defines the reusable workflows and repository contract that Meig
 - [OCI image contract reference](docs/reference/oci-image-contract.md)
 - [Copyable Go release example](examples/go-release/)
 
-Consumer repositories call the reusable workflows at a full commit SHA. The documented revision is `052e8277da00bf6369093ed8736cf5d21195d843`.
+Consumer repositories call the reusable workflows at a full commit SHA. The documented revision is `fb8c8098ff27968fb3070e928c00e925f38c698e`.

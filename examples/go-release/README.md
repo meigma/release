@@ -42,8 +42,8 @@ Replace these project-specific example values:
 
 Keep these contract values unchanged:
 
-- all four reusable workflow references at `052e8277da00bf6369093ed8736cf5d21195d843`;
-- `checksum-signing-workflow-ref` value `meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843`;
+- all four reusable workflow references at `fb8c8098ff27968fb3070e928c00e925f38c698e`;
+- `checksum-signing-workflow-ref` value `meigma/release/.github/workflows/go-pre-publish.yml@fb8c8098ff27968fb3070e928c00e925f38c698e`;
 - organization variable `MEIGMA_RELEASE_APP_CLIENT_ID`;
 - organization secret `MEIGMA_RELEASE_APP_PRIVATE_KEY`; and
 - the locked Go 1.26.6, GoReleaser 2.17.1, Syft 1.51.0, Cosign 3.1.3, GitHub CLI 2.97.0, Melange 0.59.1, and apko 1.2.37 versions unless the shared workflow contract is deliberately updated.
