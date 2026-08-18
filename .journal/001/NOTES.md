@@ -304,3 +304,9 @@ Refactored `.github/workflows/publish-oci-image.yml` so the privileged publisher
 Immutable revision `fb8c8098ff27968fb3070e928c00e925f38c698e` completed the cross-repository `v0.3.0` rehearsal in run `32175517384`. Tags `0.3.0`, `0.3`, `0`, and `latest` all resolve to index `sha256:acc39f7efed0e2e0d1d42899a902aea25451c2fb1b2bb21b4513baf533f426ac`. Exact-identity Cosign verification passed for the index and both platform manifests; GitHub provenance and both registry-backed SPDX attestations passed.
 
 All nine embedded GitHub Script programs parsed as async JavaScript. The artifact verifier reproduced the expected outputs from the prior authoritative OCI artifact, and mocked planner checks proved backport channel selection and exact-tag conflict rejection. All workflows passed `actionlint`; `goreleaser check`, offline documentation link validation, `git diff --check`, and all seven Moon tasks passed.
+
+## 2026-08-18 12:28 — Close
+
+PR [#2](https://github.com/meigma/release/pull/2) was approved as-is and squash-merged as `5566640c061c5e36f3715e0a1b57eaf69646a0ba`. Local `main` was fast-forwarded and the `mvp` worktree and branch were removed. The merged MVP completes the rehearsed GitHub Release and OCI lanes; Homebrew, MacPorts, Nix, Scoop, generalized installer, and mise work is deferred.
+
+Release Please opened [PR #3](https://github.com/meigma/release/pull/3) for `v0.1.0`; it remains open and unmerged. Before external adoption, update consumer workflow pins from pre-squash revision `fb8c8098ff27968fb3070e928c00e925f38c698e` to a reviewed revision reachable from `main`. The disposable `meigma/release-oci-remediation-e2e` repository remains available as public rehearsal evidence and requires manual deletion when no longer needed.
