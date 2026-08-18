@@ -34,6 +34,6 @@ jobs:
       artifact-id: ${{ needs.release-assets.outputs.artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.artifact-digest }}
       release-app-client-id: ${{ vars.MEIGMA_RELEASE_APP_CLIENT_ID }}
-      publish-release: false
+      publish-release: true
     secrets:
       release-app-private-key: ${{ secrets.MEIGMA_RELEASE_APP_PRIVATE_KEY }}
