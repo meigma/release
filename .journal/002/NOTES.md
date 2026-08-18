@@ -16,3 +16,9 @@ Findings: our `AGENTS.md` held only the `ai-protocol` block, identical to the te
 Done: worktree `docs/agents-go-rules` off `main`; appended the template's `# Go Best Practices` section (A/T/R/P/D/I/E/L rule groups) verbatim. `diff AGENTS.md ~/code/meigma/template-go/AGENTS.md` reports identical. Commit `docs(agents): adopt template-go engineering rules`, PR https://github.com/meigma/release/pull/4.
 Gotcha: `read` of the template showed 97 lines while the file has 98; the first `sed -n '14,97p'` silently dropped the final rule line. Verified with `diff`, then reappended with `sed -n '14,$p'`.
 Next: PR #4 awaits review/squash merge. Existing Go code in `cmd/release-mvp` and `internal/cli` has not been audited against the newly adopted rules (notably D1/D4 Godoc and `doc.go`).
+
+## 2026-08-18 12:45 — PR #4 merged
+Merged PR #4 as squash commit `0c39bedb9551031b2d704993397a2c2ce0a3769b` on `main`; `AGENTS.md` on `main` verified byte-identical to the template's.
+Gotcha: `gh pr merge --squash --delete-branch` merged server-side but then failed locally with `fatal: 'main' is already used by worktree at ...` (gh tried to check out `main` inside the branch worktree, which Worktrunk already holds in the primary checkout). Consequence: neither the remote nor local branch was cleaned up by gh. Recovered with `git fetch --prune`, `git pull --ff-only` in the main checkout, `wt remove docs/agents-go-rules`, and `git push origin --delete docs/agents-go-rules`.
+Takeaway for future merges in this repo: run `gh pr merge` from the main checkout, or pass `--delete-branch` only after leaving the PR worktree; expect to prune the branch manually otherwise.
+Next: still open from session 001 — deferred package channels, release PR #3, doc pins on pre-squash SHA, rehearsal repo deletion. Newly adopted A/T/R/P/D/I/E/L rules have not been applied to existing Go code.
