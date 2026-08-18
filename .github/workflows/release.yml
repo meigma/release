@@ -33,7 +33,7 @@ jobs:
     with:
       artifact-id: ${{ needs.release-assets.outputs.artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.artifact-digest }}
-      checksum-signing-workflow: .github/workflows/go-pre-publish.yml
+      checksum-signing-workflow-ref: ${{ github.repository }}/.github/workflows/go-pre-publish.yml@${{ github.ref }}
       release-app-client-id: ${{ vars.MEIGMA_RELEASE_APP_CLIENT_ID }}
       publish-release: true
     secrets:

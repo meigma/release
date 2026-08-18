@@ -11,8 +11,8 @@ on:
         description: Expected SHA-256 digest of the release-assets artifact.
         required: true
         type: string
-      checksum-signing-workflow:
-        description: Repository-relative workflow path that signed checksums.txt.
+      checksum-signing-workflow-ref:
+        description: Exact workflow ref expected in the checksum signing certificate identity.
         required: true
         type: string
       release-app-client-id:
@@ -191,7 +191,7 @@ jobs:
         id: bundle
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/${{ inputs.checksum-signing-workflow }}@${{ github.ref }}
+          CERTIFICATE_IDENTITY: https://github.com/${{ inputs.checksum-signing-workflow-ref }}
         with:
           script: |
             const crypto = require('node:crypto')
