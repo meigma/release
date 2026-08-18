@@ -83,6 +83,12 @@ jobs:
           add_shims_to_path: false
           export_path: false
 
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        with:
+          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+
       - name: Verify OCI build tools
         shell: bash
         run: |
