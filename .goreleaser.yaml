@@ -44,6 +44,20 @@ archives:
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
+nfpms:
+  - id: release-mvp
+    package_name: release-mvp
+    ids:
+      - release-mvp
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Meigma
+    maintainer: Meigma <contact@meigma.dev>
+    homepage: https://github.com/meigma/release
+    description: Exercise the Meigma release pipeline.
+    formats:
+      - apk
+    bindir: /usr/bin
+
 checksum:
   name_template: checksums.txt
 
