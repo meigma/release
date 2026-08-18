@@ -21,7 +21,7 @@ runs:
       id: identity
       shell: bash
       env:
-        MARKER: MARKER-A
+        MARKER: MARKER-B
         ACTION_REPOSITORY: ${{ github.action_repository }}
         ACTION_REF: ${{ github.action_ref }}
         ACTION_PATH: ${{ github.action_path }}
