@@ -2,7 +2,7 @@
 
 This directory models a repository named `example` with module `example.com/meigma/release-consumer` and command `./cmd/example`. It contains the minimum source needed to build GitHub Release assets and a multi-architecture OCI image. It is not a complete CI policy: add the consumer repository's own build, test, review, and branch-protection controls.
 
-See [Configure GitHub Releases](../../docs/how-to/configure-github-releases.md) for credential setup, adoption, and verification. See [Rehearse and recover GitHub Releases](../../docs/how-to/rehearse-and-recover-github-releases.md) before the first publication. Use [Upgrade GitHub Release workflows](../../docs/how-to/upgrade-github-release-workflows.md) to change the pinned revision. The reusable workflow interface is defined in the [GitHub Release contract](../../docs/reference/github-release-contract.md).
+See [Configure GitHub Releases](../../docs/how-to/configure-github-releases.md) for release credential setup and [Configure OCI image publication](../../docs/how-to/configure-oci-images.md) for image configuration, publication, and verification. See [Rehearse and recover GitHub Releases](../../docs/how-to/rehearse-and-recover-github-releases.md) before the first publication. Use [Upgrade GitHub Release workflows](../../docs/how-to/upgrade-github-release-workflows.md) to change the pinned revision. The reusable interfaces are defined in the [GitHub Release contract](../../docs/reference/github-release-contract.md) and [OCI image contract](../../docs/reference/oci-image-contract.md).
 
 ## Files to copy
 
@@ -42,12 +42,12 @@ Replace these project-specific example values:
 
 Keep these contract values unchanged:
 
-- all three reusable workflow references at `590457073d615c9063a06f8c34cee6ebbc87a936`;
-- `checksum-signing-workflow-ref` value `meigma/release/.github/workflows/go-pre-publish.yml@590457073d615c9063a06f8c34cee6ebbc87a936`;
+- all four reusable workflow references at `72945990eda349f83c0f7628e85521fb30071fc6`;
+- `checksum-signing-workflow-ref` value `meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6`;
 - organization variable `MEIGMA_RELEASE_APP_CLIENT_ID`;
 - organization secret `MEIGMA_RELEASE_APP_PRIVATE_KEY`; and
 - the locked Go 1.26.6, GoReleaser 2.17.1, Syft 1.51.0, Cosign 3.1.3, GitHub CLI 2.97.0, Melange 0.59.1, and apko 1.2.37 versions unless the shared workflow contract is deliberately updated.
 
-The caller sets `publish-release: false` so the first run leaves a populated draft. After inspecting that draft, change the input to `true` and follow the recovery guide to publish through the same tag and release.
+The caller sets both `publish-image: false` and `publish-release: false` so the first run leaves a populated draft without writing to GHCR. After inspecting the draft and `oci-image` artifact, change both inputs to `true` and follow the recovery guide to publish through the same tag and release.
 
-The OCI job retains the signed APK repository, apko lock, SPDX files, and OCI layout in the `oci-image` workflow artifact. It does not publish the image to a registry.
+The OCI builder retains the signed APK repository, apko lock, SPDX files, and OCI layout in the `oci-image` workflow artifact. The separate publisher verifies that artifact before pushing, signing, and attesting `ghcr.io/owner/repository`.

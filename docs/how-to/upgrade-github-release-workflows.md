@@ -1,6 +1,6 @@
 # Upgrade GitHub Release workflows
 
-Use this guide to move a consumer repository from the current workflow revision, `5be87cc60f2f11ac11fe401d8129c7644edc17ca`, to a reviewed immutable revision. Do not use a branch or tag as a reusable workflow reference. The [GitHub Release contract](../reference/github-release-contract.md) defines the current interface and asset boundary.
+Use this guide to move a consumer repository from the current workflow revision, `72945990eda349f83c0f7628e85521fb30071fc6`, to a reviewed immutable revision. Do not use a branch or tag as a reusable workflow reference. The [GitHub Release contract](../reference/github-release-contract.md) and [OCI image contract](../reference/oci-image-contract.md) define the current interfaces and publication boundaries.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ Record the consumer, the current baseline, and a local checkout of `meigma/relea
 
 ```bash
 export REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
-export CURRENT_RELEASE_REVISION=5be87cc60f2f11ac11fe401d8129c7644edc17ca
+export CURRENT_RELEASE_REVISION=72945990eda349f83c0f7628e85521fb30071fc6
 read -r -p 'Reviewed full meigma/release commit SHA: ' NEW_RELEASE_REVISION
 export NEW_RELEASE_REVISION
 read -r -p 'Path to the meigma/release checkout: ' RELEASE_CHECKOUT
@@ -48,18 +48,23 @@ git -C "$RELEASE_CHECKOUT" diff \
   "$NEW_RELEASE_REVISION^{commit}" \
   -- \
   .github/workflows/go-pre-publish.yml \
+  .github/workflows/go-oci-build.yml \
   .github/workflows/publish-github-release.yml \
+  .github/workflows/publish-oci-image.yml \
   .github/workflows/release.yml \
   .github/workflows/release-please.yml \
   docs/reference/github-release-contract.md \
+  docs/reference/oci-image-contract.md \
   examples/go-release
 ```
 
-Read the complete target contract after reviewing the diff:
+Read both complete target contracts after reviewing the diff:
 
 ```bash
 git -C "$RELEASE_CHECKOUT" show \
   "$NEW_RELEASE_REVISION:docs/reference/github-release-contract.md"
+git -C "$RELEASE_CHECKOUT" show \
+  "$NEW_RELEASE_REVISION:docs/reference/oci-image-contract.md"
 ```
 
 Before adoption, identify changes to:
@@ -70,19 +75,21 @@ Before adoption, identify changes to:
 - consumer source and GoReleaser configuration requirements;
 - GitHub App credentials, tag rules, or other external prerequisites;
 - runner and mise requirements; and
-- required Go, GoReleaser, Syft, Cosign, or GitHub CLI versions.
+- required Go, GoReleaser, Syft, Cosign, GitHub CLI, Melange, apko, or ORAS versions.
 
 Stop if the target revision removes a required consumer capability or if any migration or rollback step is unresolved. Do not infer compatibility from an unchanged workflow filename.
 
 ## 2. Apply the target contract atomically
 
-In `.github/workflows/release.yml`, replace the current revision with `NEW_RELEASE_REVISION` in all three locations:
+In `.github/workflows/release.yml`, replace the current revision with `NEW_RELEASE_REVISION` in all five locations:
 
 1. `uses: meigma/release/.github/workflows/go-pre-publish.yml@...`
-2. `uses: meigma/release/.github/workflows/publish-github-release.yml@...`
-3. `checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@...`
+2. `uses: meigma/release/.github/workflows/go-oci-build.yml@...`
+3. `uses: meigma/release/.github/workflows/publish-oci-image.yml@...`
+4. `uses: meigma/release/.github/workflows/publish-github-release.yml@...`
+5. `checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@...`
 
-Keep `publish-release: false` for the upgrade rehearsal. The two reusable workflow references and the checksum signing identity must change in the same pull request and commit. A mixed revision fails the signing boundary or runs producer and publisher contracts that were not reviewed together.
+Keep both `publish-image: false` and `publish-release: false` for the upgrade rehearsal. All four reusable workflow references and the checksum signing identity must change in the same pull request and commit. A mixed revision fails a signing boundary or runs contracts that were not reviewed together.
 
 Apply every other target-contract change in that same upgrade:
 
@@ -96,12 +103,13 @@ External prerequisites cannot be committed atomically with repository files. Ass
 Check the edited caller:
 
 ```bash
-test "$(grep -F -c "$NEW_RELEASE_REVISION" .github/workflows/release.yml)" -eq 3
+test "$(grep -F -c "$NEW_RELEASE_REVISION" .github/workflows/release.yml)" -eq 5
 ! grep -F -q "$CURRENT_RELEASE_REVISION" .github/workflows/release.yml
+grep -F 'publish-image: false' .github/workflows/release.yml
 grep -F 'publish-release: false' .github/workflows/release.yml
 ```
 
-All three commands must succeed: the caller must contain three target references, no baseline reference, and the draft-only input.
+All four commands must succeed: the caller must contain five target references, no baseline reference, and both disabled publication controls.
 
 Write a migration and rollback checklist in the upgrade pull request. It must record:
 
@@ -150,7 +158,7 @@ Review the final diff and confirm that it contains no moving reusable workflow r
 
 ## 5. Rehearse the target revision
 
-After the upgrade reaches the default branch, perform the draft-only procedure in [Rehearse and recover GitHub Releases](rehearse-and-recover-github-releases.md). Do not change `publish-release` to `true` until the target revision has populated and verified a draft.
+After the upgrade reaches the default branch, perform the draft-only procedure in [Rehearse and recover GitHub Releases](rehearse-and-recover-github-releases.md). Do not enable either publisher until the target revision has populated and verified a draft and produced the expected OCI artifact.
 
 Use the linked guide for its release creation, exact run selection, draft lookup, resumption, and recovery mechanics. During an upgrade rehearsal, the target contract overrides every baseline constant in that guide. In particular, require the target asset names and count, the checksum certificate identity ending in `@$NEW_RELEASE_REVISION`, and the publisher `--signer-digest "$NEW_RELEASE_REVISION"`. Do not reject a target-compliant draft because it differs from the baseline fourteen-asset set or baseline revision.
 
@@ -225,7 +233,7 @@ done < checksums.txt
 
 Every invocation must exit successfully. `--signer-digest` binds the reusable publisher to the reviewed target commit; the source-ref constraint binds the attestation to the consumer's candidate tag.
 
-After these checks pass, change `publish-release` to `true` and resume through the same tag and populated draft as described in the rehearsal guide. The resume run must use `NEW_RELEASE_REVISION` in all three caller locations.
+After these checks pass, change both `publish-image` and `publish-release` to `true` and resume through the same tag and populated draft as described in the rehearsal guide. The resume run must use `NEW_RELEASE_REVISION` in all five caller locations.
 
 ## Roll back before publication
 
@@ -233,9 +241,9 @@ If no candidate tag exists, reverse every repository and external-prerequisite c
 
 If the target revision has populated an unpublished draft:
 
-1. Reverse every repository change in the migration checklist in one rollback commit, including both `uses:` entries, `checksum-signing-workflow-ref`, caller permissions and interfaces, source and asset configuration, and tool pins and lock entries.
+1. Reverse every repository change in the migration checklist in one rollback commit, including all four `uses:` entries, `checksum-signing-workflow-ref`, caller permissions and interfaces, source and asset configuration, and tool pins and lock entries.
 2. Restore every changed external prerequisite to the prior state recorded in the checklist. Sequence those changes so the rollback workflow remains operable, and record each observable restored state.
-3. Keep `publish-release: false`.
+3. Keep both `publish-image: false` and `publish-release: false`.
 4. Run the locked install, GoReleaser check, actionlint, and repository checks against the complete rollback.
 5. Move the same unpublished tag to the rollback commit and trigger a new top-level Release run, following the recovery procedure.
 6. Verify the restored asset contract, Cosign identity, and GitHub signer digest before enabling publication.

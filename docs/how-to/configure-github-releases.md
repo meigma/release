@@ -66,6 +66,8 @@ mkdir -p "$CONSUMER/.github/workflows"
 cp examples/go-release/.github/workflows/release-please.yml "$CONSUMER/.github/workflows/"
 cp examples/go-release/.github/workflows/release.yml "$CONSUMER/.github/workflows/"
 cp examples/go-release/.goreleaser.yaml "$CONSUMER/"
+cp examples/go-release/apko.yaml "$CONSUMER/"
+cp examples/go-release/melange.yaml "$CONSUMER/"
 cp examples/go-release/.release-please-manifest.json "$CONSUMER/"
 cp examples/go-release/release-please-config.json "$CONSUMER/"
 cp examples/go-release/mise.toml "$CONSUMER/"
@@ -94,19 +96,20 @@ In the copied files, replace the example values with values from the consumer re
 - In `release-please-config.json`, replace package name `example` and choose the intended first release in `initial-version`.
 - In `.release-please-manifest.json`, keep `0.0.0` only for a repository that has never released. For an existing project, set `.` to its latest released version without the `v` prefix.
 - In `.github/workflows/release-please.yml`, replace `main` if the consumer's default branch is different.
+- In `melange.yaml` and `apko.yaml`, replace the package name, command path, description, license, source URL, and image annotations as described in [Configure OCI image publication](configure-oci-images.md).
 
 Do not replace these shared contract values:
 
-- reusable workflow revision `5be87cc60f2f11ac11fe401d8129c7644edc17ca`;
-- `checksum-signing-workflow-ref` value `meigma/release/.github/workflows/go-pre-publish.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca`;
+- reusable workflow revision `72945990eda349f83c0f7628e85521fb30071fc6`;
+- `checksum-signing-workflow-ref` value `meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6`;
 - variable name `MEIGMA_RELEASE_APP_CLIENT_ID`; or
 - secret name `MEIGMA_RELEASE_APP_PRIVATE_KEY`.
 
-To change the immutable revision later, follow [Upgrade GitHub Release workflows](upgrade-github-release-workflows.md). Update both reusable workflow references and the checksum signing identity together; do not edit one reference in isolation.
+To change the immutable revision later, follow [Upgrade GitHub Release workflows](upgrade-github-release-workflows.md). Update all reusable workflow references and the checksum signing identity together; do not edit one reference in isolation.
 
 The copied GoReleaser configuration builds Darwin, Linux, and Windows archives for amd64 and arm64. Confirm that the consumer command supports those targets before releasing it.
 
-The copied release caller sets `publish-release: false`. Keep that value for a draft rehearsal. Before a public release, change it to `true` and merge the change before Release Please creates the tag. The [rehearsal and recovery guide](rehearse-and-recover-github-releases.md) gives the safer first-run sequence.
+The copied release caller sets both `publish-image: false` and `publish-release: false`. Keep both values for the first rehearsal. Before a public release, change both to `true` and merge the change before Release Please creates the tag. The [rehearsal and recovery guide](rehearse-and-recover-github-releases.md) gives the safer first-run sequence.
 
 ## 5. Generate and validate the tool lock
 
@@ -119,7 +122,7 @@ mise exec -- goreleaser check
 mise exec -- go list ./cmd/...
 ```
 
-`mise lock` must leave `mise.lock` with entries for the pinned Go, GoReleaser, Syft, Cosign, and GitHub CLI tools. `mise install --locked` must complete without changing a requested version, and `goreleaser check` must accept `.goreleaser.yaml`. Confirm that `go list` includes the command path configured in `.goreleaser.yaml`.
+`mise lock` must leave `mise.lock` with entries for the pinned Go, GoReleaser, Syft, Cosign, GitHub CLI, Melange, and apko tools. `mise install --locked` must complete without changing a requested version, and `goreleaser check` must accept `.goreleaser.yaml`. Confirm that `go list` includes the command path configured in `.goreleaser.yaml`.
 
 Commit both `mise.toml` and the generated `mise.lock` with the other release files. Submit the change through the repository's normal pull request review and squash-merge process.
 
@@ -134,7 +137,7 @@ Each command must print the corresponding workflow instead of reporting that the
 
 ## 6. Run Release Please
 
-Before continuing with a public release, confirm that `.github/workflows/release.yml` on the default branch contains `publish-release: true`. Release Please also needs at least one releasable Conventional Commit after the version recorded in `.release-please-manifest.json`. Do not create an empty release commit to satisfy this condition.
+Before continuing with a public release, confirm that `.github/workflows/release.yml` on the default branch contains both `publish-image: true` and `publish-release: true`. Release Please also needs at least one releasable Conventional Commit after the version recorded in `.release-please-manifest.json`. Do not create an empty release commit to satisfy this condition.
 
 When a releasable change is present, dispatch Release Please and inspect its run:
 
@@ -176,7 +179,7 @@ gh run list --repo "$REPOSITORY" --workflow release-please.yml --limit 5
 gh run list --repo "$REPOSITORY" --workflow release.yml --limit 5
 ```
 
-With `publish-release: true`, the Release workflow builds one authoritative artifact, verifies its handoff and signed checksum manifest, uploads the closed asset set to the draft, creates GitHub attestations for the checksummed payloads, verifies GitHub's asset digests, and changes the draft to a published release. It does not create a second release.
+With both publishers enabled, the Release workflow builds the authoritative archives and OCI image, verifies their handoffs, publishes and signs the GHCR image, creates image and release attestations, uploads the closed asset set to the draft, verifies GitHub's asset digests, and changes the draft to a published release. It does not create a second release.
 
 For an unmodified new example, the first tag is `v0.1.0`. For another repository, set `TAG` to the exact tag shown by the successful Release Please run:
 
@@ -224,7 +227,7 @@ Verify that the checksum manifest was signed by the canonical reusable pre-publi
 ```bash
 mise exec -- cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity 'https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca' \
+  --certificate-identity 'https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   checksums.txt
 ```
@@ -240,7 +243,7 @@ while IFS= read -r entry; do
   mise exec -- gh attestation verify "$asset" \
     --repo "$REPOSITORY" \
     --signer-workflow meigma/release/.github/workflows/publish-github-release.yml \
-    --signer-digest 5be87cc60f2f11ac11fe401d8129c7644edc17ca \
+    --signer-digest 72945990eda349f83c0f7628e85521fb30071fc6 \
     --source-ref "refs/tags/$TAG" \
     --deny-self-hosted-runners
 done < checksums.txt

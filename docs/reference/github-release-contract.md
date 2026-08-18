@@ -1,30 +1,30 @@
 # GitHub release contract reference
 
-This page defines the cross-repository contract for the reusable Go producer and GitHub Release publisher at revision `5be87cc60f2f11ac11fe401d8129c7644edc17ca`.
+This page defines the cross-repository contract for the reusable Go producer and GitHub Release publisher at revision `72945990eda349f83c0f7628e85521fb30071fc6`.
 
-For configuration steps, see [Configure GitHub releases](../how-to/configure-github-releases.md). For draft rehearsals and recovery steps, see [Rehearse and recover GitHub releases](../how-to/rehearse-and-recover-github-releases.md). To adopt another immutable revision, see [Upgrade GitHub release workflows](../how-to/upgrade-github-release-workflows.md). A complete consumer repository is available in the [Go release example](../../examples/go-release/).
+For configuration steps, see [Configure GitHub releases](../how-to/configure-github-releases.md). For draft rehearsals and recovery steps, see [Rehearse and recover GitHub releases](../how-to/rehearse-and-recover-github-releases.md). The [OCI image contract](oci-image-contract.md) defines the image builder and publisher that gate the complete delivery caller. To adopt another immutable revision, see [Upgrade GitHub release workflows](../how-to/upgrade-github-release-workflows.md). A complete consumer repository is available in the [Go release example](../../examples/go-release/).
 
 ## Canonical workflow references
 
-Consumer repositories must pin both reusable workflows to the full revision:
+The complete caller pins all four reusable workflows to one full revision. The GitHub Release path directly calls the producer and GitHub publisher:
 
 ```yaml
-uses: meigma/release/.github/workflows/go-pre-publish.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca
+uses: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
 ```
 
 ```yaml
-uses: meigma/release/.github/workflows/publish-github-release.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca
+uses: meigma/release/.github/workflows/publish-github-release.yml@72945990eda349f83c0f7628e85521fb30071fc6
 ```
 
 The checksum signer identity input must name the same producer workflow revision:
 
 ```yaml
-checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca
+checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
 ```
 
 ## Caller contract
 
-The supported caller runs on creation or movement of a `v*` tag. Both reusable workflows reject a non-tag ref. Tag deletion events must not start the producer job.
+The supported caller runs on creation or movement of a `v*` tag. Every reusable workflow rejects a non-tag ref. Tag deletion events must not start the producer job. The GitHub Release publisher waits for successful image build and publication so a registry failure leaves the release draft unpublished.
 
 ```yaml
 name: Release
@@ -47,22 +47,53 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: meigma/release/.github/workflows/go-pre-publish.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca
+    uses: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
 
-  github-release:
-    name: Publish GitHub Release
+  oci-image:
+    name: Build OCI image
     needs: release-assets
+    permissions:
+      actions: read
+      contents: read
+    uses: meigma/release/.github/workflows/go-oci-build.yml@72945990eda349f83c0f7628e85521fb30071fc6
+    with:
+      artifact-id: ${{ needs.release-assets.outputs.oci-input-artifact-id }}
+      artifact-digest: ${{ needs.release-assets.outputs.oci-input-artifact-digest }}
+
+  oci-publish:
+    name: Publish OCI image
+    needs: oci-image
     permissions:
       actions: read
       artifact-metadata: write
       attestations: write
       contents: read
       id-token: write
-    uses: meigma/release/.github/workflows/publish-github-release.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca
+      packages: write
+    uses: meigma/release/.github/workflows/publish-oci-image.yml@72945990eda349f83c0f7628e85521fb30071fc6
+    with:
+      artifact-id: ${{ needs.oci-image.outputs.artifact-id }}
+      artifact-digest: ${{ needs.oci-image.outputs.artifact-digest }}
+      image-digest: ${{ needs.oci-image.outputs.image-digest }}
+      publish-image: true
+
+  github-release:
+    name: Publish GitHub Release
+    needs:
+      - release-assets
+      - oci-image
+      - oci-publish
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    uses: meigma/release/.github/workflows/publish-github-release.yml@72945990eda349f83c0f7628e85521fb30071fc6
     with:
       artifact-id: ${{ needs.release-assets.outputs.artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.artifact-digest }}
-      checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca
+      checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
       release-app-client-id: ${{ vars.MEIGMA_RELEASE_APP_CLIENT_ID }}
       publish-release: true
     secrets:
@@ -261,14 +292,14 @@ The checksum signature is accepted only when Cosign verifies all of the followin
 
 | Field | Required value |
 | --- | --- |
-| Certificate identity | `https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca` |
+| Certificate identity | `https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6` |
 | Certificate OIDC issuer | `https://token.actions.githubusercontent.com` |
 | Signed blob | `checksums.txt` |
 | Bundle | `checksums.txt.sigstore.json` |
 
 The exact identity comes from `checksum-signing-workflow-ref`; a branch name, tag name, different commit, or different workflow path does not satisfy the documented identity.
 
-The publisher at `meigma/release/.github/workflows/publish-github-release.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca` creates GitHub build-provenance attestations in the consumer repository. Its job token creates attestations but has only `contents: read`. A short-lived Release App installation token with `contents: write` performs draft discovery, asset upload, and the final draft-state change.
+The publisher at `meigma/release/.github/workflows/publish-github-release.yml@72945990eda349f83c0f7628e85521fb30071fc6` creates GitHub build-provenance attestations in the consumer repository. Its job token creates attestations but has only `contents: read`. A short-lived Release App installation token with `contents: write` performs draft discovery, asset upload, and the final draft-state change.
 
 ## Publication states
 
@@ -295,7 +326,7 @@ A failed run does not roll back uploaded assets or delete the draft. Recovery is
 - After upload, the workflow verifies the complete name set and every GitHub-computed SHA-256 digest before it can publish.
 - The tag must still resolve to `github.sha`, and the release for that tag must still be a draft.
 
-A draft rehearsal sets `publish-release: false`. To resume, the caller changes the input to `true`, commits that change, and uses authorized movement of the same unpublished tag name to trigger a new run against the existing populated draft; it does not delete and recreate the draft. The workflow replaces expected assets only after the new artifact, checksums, and Cosign bundle pass validation. Any source, workflow configuration, or tool-pin correction follows the same commit and tag-movement requirement. If the unpublished tag cannot be moved safely, the incomplete candidate must be abandoned and a new candidate cut. A plain Actions rerun is reserved for failures that require no repository-content change, such as artifact expiry or a transient service failure. See the [rehearsal and recovery guide](../how-to/rehearse-and-recover-github-releases.md) for the procedure.
+A complete draft rehearsal sets both `publish-image: false` and `publish-release: false`. To resume, the caller changes both inputs to `true`, commits that change, and uses authorized movement of the same unpublished tag name to trigger a new run against the existing populated draft; it does not delete and recreate the draft. The workflow replaces expected assets only after the new artifact, checksums, and Cosign bundle pass validation. Any source, workflow configuration, or tool-pin correction follows the same commit and tag-movement requirement. If the unpublished tag cannot be moved safely, the incomplete candidate must be abandoned and a new candidate cut. A plain Actions rerun is reserved for failures that require no repository-content change, such as artifact expiry or a transient service failure.
 
 If the final API call has already changed the release to non-draft before a later failure, the workflow provides no rollback. A subsequent run rejects that published release because the draft invariant no longer holds.
 
@@ -303,7 +334,7 @@ If the final API call has already changed the release to non-draft before a late
 
 This contract does not provide or imply:
 
-- OCI image construction or registry publication.
+- OCI construction or publication behavior beyond the dependency ordering defined here; see the separate [OCI image contract](oci-image-contract.md).
 - Homebrew, MacPorts, Nix, Scoop, mise registry, or other package-manager publication.
 - DEB, RPM, APK, package-repository, or installer publication.
 - Release support for languages other than the documented Go producer profile.

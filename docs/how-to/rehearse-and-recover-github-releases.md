@@ -24,23 +24,24 @@ export DEFAULT_BRANCH="$(gh repo view --json defaultBranchRef --jq .defaultBranc
 
 ## 1. Configure a draft-only run
 
-In `.github/workflows/release.yml`, set the publisher input to:
+In `.github/workflows/release.yml`, disable both publishers:
 
 ```yaml
+publish-image: false
 publish-release: false
 ```
 
-The copyable example already uses this value. Merge the change into the default branch before Release Please creates the candidate tag. The tag must contain the draft-only caller; changing an untagged branch after the tag exists does not change that run.
+The copyable example already uses both values. Merge the change into the default branch before Release Please creates the candidate tag. The tag must contain the rehearsal caller; changing an untagged branch after the tag exists does not change that run.
 
 Confirm the value on the default branch:
 
 ```bash
 git fetch origin "$DEFAULT_BRANCH"
 git show "origin/$DEFAULT_BRANCH:.github/workflows/release.yml" |
-  grep 'publish-release: false'
+  grep -E 'publish-(image|release): false'
 ```
 
-The command must print the draft-only input. Do not start the release if it prints nothing.
+The command must print both disabled inputs. Do not start the release if either is missing.
 
 ## 2. Create the candidate tag and draft
 
@@ -101,7 +102,7 @@ gh run watch "$RELEASE_RUN_ID" \
   --exit-status
 ```
 
-At the documented current revision, a successful draft-only run leaves the Release workflow green and the release unpublished with six platform archives, six archive SBOMs, `checksums.txt`, and `checksums.txt.sigstore.json`. When rehearsing another revision, use the target asset contract in [Upgrade GitHub Release workflows](upgrade-github-release-workflows.md).
+At the documented current revision, a successful draft-only run leaves the Release workflow green, the release unpublished with six platform archives, six archive SBOMs, `checksums.txt`, and `checksums.txt.sigstore.json`, and GHCR unchanged. The run also retains the verified multi-architecture layout, signed APK repository, apko lock, and image SBOMs in the `oci-image` workflow artifact. When rehearsing another revision, use the target contracts in [Upgrade GitHub Release workflows](upgrade-github-release-workflows.md).
 
 ## 3. Inspect the populated draft
 
@@ -126,9 +127,10 @@ Before resuming, inspect the Release workflow log and the draft asset list. Do n
 
 ## 4. Resume through the same tag and draft
 
-Change `.github/workflows/release.yml` to:
+Change both publication controls in `.github/workflows/release.yml`:
 
 ```yaml
+publish-image: true
 publish-release: true
 ```
 
@@ -140,7 +142,7 @@ export RECOVERY_SHA="$(git rev-parse "origin/$DEFAULT_BRANCH")"
 printf 'Recovery commit: %s\n' "$RECOVERY_SHA"
 ```
 
-The `push`-on-tag caller has no manual dispatch input. A rerun of the original Actions run would use the original tagged workflow with `publish-release: false`. To exercise the updated caller, move the same rehearsal tag to the recovery commit and push that tag update:
+The `push`-on-tag caller has no manual dispatch input. A rerun of the original Actions run would use the original tagged workflow with both publishers disabled. To exercise the updated caller, move the same rehearsal tag to the recovery commit and push that tag update:
 
 ```bash
 git tag --force "$TAG" "$RECOVERY_SHA"
@@ -285,7 +287,7 @@ If the repository does not need a correction, rerun the complete top-level workf
 For the documented current revision, the publisher requires a nonempty `checksums.txt`, the exact closed payload list, matching payload hashes, a regular Cosign bundle file, issuer `https://token.actions.githubusercontent.com`, and this certificate identity:
 
 ```text
-https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@5be87cc60f2f11ac11fe401d8129c7644edc17ca
+https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
 ```
 
 For an upgrade rehearsal, replace the current-revision identity with the target value described in [Upgrade GitHub Release workflows](upgrade-github-release-workflows.md).
