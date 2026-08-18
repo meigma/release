@@ -1,0 +1,103 @@
+name: Spike self-reference
+
+# Throwaway spike (architecture spike A). Proves that a reusable workflow called
+# by an external repository at a full commit SHA can load a sibling action from
+# the same commit through the `$/` self-repository syntax, with no checkout and
+# no elevated permissions.
+
+on:
+  workflow_call:
+    inputs:
+      expected-marker:
+        description: Marker literal the caller expects the pinned action to report.
+        required: true
+        type: string
+      probe-rerun:
+        description: When true, fail the rerun probe job on the first attempt only.
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      marker:
+        description: Marker reported by the resolved action.
+        value: ${{ jobs.resolve.outputs.marker }}
+      action-repository:
+        description: Action repository observed inside the resolved action.
+        value: ${{ jobs.resolve.outputs.action-repository }}
+
+permissions: {}
+
+jobs:
+  resolve:
+    name: Resolve sibling action through $/
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      marker: ${{ steps.marker.outputs.marker }}
+      action-repository: ${{ steps.marker.outputs.action-repository }}
+    steps:
+      - name: Resolve marker action from the running commit
+        id: marker
+        uses: $/.github/actions/spike-marker
+
+      - name: Assert pinned commit resolution
+        shell: bash
+        env:
+          EXPECTED: ${{ inputs.expected-marker }}
+          OBSERVED: ${{ steps.marker.outputs.marker }}
+          OBSERVED_REPOSITORY: ${{ steps.marker.outputs.action-repository }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+          JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+        run: |
+          set -euo pipefail
+
+          echo "expected marker:        ${EXPECTED}"
+          echo "observed marker:        ${OBSERVED}"
+          echo "action repository:      ${OBSERVED_REPOSITORY}"
+          echo "caller repository:      ${CALLER_REPOSITORY}"
+          echo "job workflow ref:       ${JOB_WORKFLOW_REF}"
+          echo "job workflow sha:       ${JOB_WORKFLOW_SHA}"
+
+          if [[ "${OBSERVED}" != "${EXPECTED}" ]]; then
+            echo "::error::Resolved action reported '${OBSERVED}', expected '${EXPECTED}'."
+            exit 1
+          fi
+
+          if [[ "${OBSERVED_REPOSITORY}" == "${CALLER_REPOSITORY}" ]]; then
+            echo "::error::Action repository must be the callee, not the caller."
+            exit 1
+          fi
+
+  rerun-probe:
+    name: Rerun probe
+    if: inputs.probe-rerun
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Resolve marker action from the running commit
+        id: marker
+        uses: $/.github/actions/spike-marker
+
+      - name: Fail on first attempt, then assert pinned resolution
+        shell: bash
+        env:
+          ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED: ${{ inputs.expected-marker }}
+          OBSERVED: ${{ steps.marker.outputs.marker }}
+        run: |
+          set -euo pipefail
+
+          echo "attempt ${ATTEMPT}; observed marker ${OBSERVED}"
+
+          if [[ "${ATTEMPT}" == "1" ]]; then
+            echo "::error::Deliberate first-attempt failure for the rerun probe."
+            exit 1
+          fi
+
+          if [[ "${OBSERVED}" != "${EXPECTED}" ]]; then
+            echo "::error::Rerun resolved '${OBSERVED}', expected '${EXPECTED}'."
+            exit 1
+          fi

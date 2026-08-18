@@ -1,0 +1,48 @@
+name: Spike self-reference marker
+description: >
+  Throwaway spike action. Prints a commit-embedded marker plus non-secret action
+  identity so a caller can prove which commit an internal `$/` reference resolved.
+
+outputs:
+  marker:
+    description: Marker literal embedded in this commit of the action.
+    value: ${{ steps.identity.outputs.marker }}
+  action-repository:
+    description: Value of github.action_repository as seen inside the action.
+    value: ${{ steps.identity.outputs.action-repository }}
+  action-ref:
+    description: Value of github.action_ref as seen inside the action.
+    value: ${{ steps.identity.outputs.action-ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Report action identity
+      id: identity
+      shell: bash
+      env:
+        MARKER: MARKER-A
+        ACTION_REPOSITORY: ${{ github.action_repository }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+        CALLER_REPOSITORY: ${{ github.repository }}
+        JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
+        JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+      run: |
+        set -euo pipefail
+
+        {
+          echo "marker=${MARKER}"
+          echo "action-repository=${ACTION_REPOSITORY}"
+          echo "action-ref=${ACTION_REF}"
+        } >>"${GITHUB_OUTPUT}"
+
+        echo "SPIKE_MARKER=${MARKER}"
+        echo "SPIKE_ACTION_REPOSITORY=${ACTION_REPOSITORY}"
+        echo "SPIKE_ACTION_REF=${ACTION_REF}"
+        echo "SPIKE_ACTION_PATH=${ACTION_PATH}"
+        echo "SPIKE_CALLER_REPOSITORY=${CALLER_REPOSITORY}"
+        echo "SPIKE_JOB_WORKFLOW_REF=${JOB_WORKFLOW_REF}"
+        echo "SPIKE_JOB_WORKFLOW_SHA=${JOB_WORKFLOW_SHA}"
+        echo "SPIKE_RUNNER_VERSION=${RUNNER_VERSION:-unset}"
+        echo "SPIKE_WORKSPACE_ENTRIES=$(ls -A "${GITHUB_WORKSPACE}" | wc -l | tr -d ' ')"
