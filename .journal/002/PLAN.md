@@ -985,7 +985,24 @@ Also observed, benign: `actions/attest` logs `Failed to create storage record: n
 
 **Pass:** no manual semantic-version edit, exact installed-path equality, deliberate mismatch behavior, and one root tag/version.
 
-**Fallback:** use Release Please `extra-files` for the semantic version only; keep protocol `1` as an explicit literal in the action step and linker default/config, and add a PR/CI script that parses `action.yml` plus `release-cli version --json` and fails if they differ. Protocol bumps change both literals in one release-unit PR. This retains the exact guard and all ports; it does not introduce `cli-version` or negotiation.
+**Result — PASSED 2026-08-18; PR 1's release cutover is unblocked. The fallback shape is now the primary shape.** Scratch repo `meigma/release-stamp-spike` (archived). Two full round trips with **zero manual version edits**: `0.0.0 → 0.1.0` (PR #1) and `0.1.0 → 0.1.1` (PR #2), each updating the action stamp, `.release-please-manifest.json`, and `CHANGELOG.md`, with one root tag/version and no second component. Assets for `v0.1.1` (`stamp-cli_0.1.1_linux_amd64.tar.gz`, `checksums.txt`) were built with `-X main.version`, attested with `actions/attest`, and uploaded. All four guard scenarios then ran green:
+
+| Scenario | Observed |
+|---|---|
+| `installed-match` | download → `stamp-cli_0.1.1_linux_amd64.tar.gz: OK` → `gh attestation verify` → reported `version=0.1.1 protocol=1` equal to the stamps → proceed (run 32194605794) |
+| `installed-mismatch` | changed **only** the action's `EXPECTED_PROTOCOL` to `2`; setup step outcome `failure` before any command ran (run 32194615539) |
+| `cli-path-match` | caller-built binary with matching stamps, no warning (run 32194625639) |
+| `cli-path-mismatch` | off-contract binary (`protocol 7`, `version 0.0.0-off-contract`) produced two `::warning` annotations — "You supplied the binary, you own the pairing" — and the run continued green (run 32194635322) |
+
+**Corrections and requirements this spike forces:**
+
+1. **Use the `generic` extra-file type for `action.yml`, not `yaml`+`jsonpath`.** Both stamped correctly, but the YAML updater **re-serializes the document and strips comments**: the probe file lost both of its comment lines, while the `# x-release-please-start-version` / `# x-release-please-end` annotated block was edited surgically. `action.yml` carries explanatory comments and must use the annotated generic updater.
+2. **The App token for Release Please is load-bearing, not incidental.** With `GITHUB_TOKEN`, the tag Release Please creates does **not** trigger tag-push workflows — the spike's asset job never fired and had to be dispatched manually. `meigma/release` already mints an App token for that job, so PR 1 inherits a working chain, but the plan now records it as a requirement: never downgrade `release-please.yml` to `GITHUB_TOKEN`.
+3. **New consumer adoption needs an organization owner.** Extending the release App's installation to another repository returned `403: You do not have permission to modify this app on meigma` for a token with `admin:org` + `repo`. Onboarding each additional org/repo is an owner action, alongside the first-GHCR-package visibility step already recorded in session 001.
+4. **`github.action_repository` is empty for local-path action invocations.** Deriving the distribution repository from action identity works under `$/` (spike A observed `meigma/release`) but must fall back to `${GITHUB_REPOSITORY}` when the composite is invoked as `./.github/actions/...` in this repo's own tests. Keep both branches; still never hardcode a repository.
+5. **The source-level protocol equality check is still unwritten.** The spike proved the *runtime* guard (binary versus action). PR 1 must additionally add the trivial CI check that parses `EXPECTED_PROTOCOL` from `action.yml` and the protocol literal from Go source and fails on divergence, since `extra-files` stamps the version only.
+
+**Fallback (now adopted as primary):** Release Please `extra-files` stamps the semantic version through the annotated generic updater; protocol `1` stays an explicit literal in the action and in Go source, guarded by the CI equality check above plus the runtime guard. Protocol bumps change both literals in one release-unit PR. No `cli-version`, no negotiation.
 
 The later provenance-predicate, `sigstore-go`, and native App-token experiments are trigger-gated research, not implementation gates and not scheduled by this plan.
 
