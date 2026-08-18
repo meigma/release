@@ -64,13 +64,15 @@ jobs:
       arm64-sbom-attestation-url: ${{ steps.arm64-sbom.outputs.attestation-url }}
     steps:
       - name: Require a stable release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ ! "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::OCI publication requires a stable vMAJOR.MINOR.PATCH tag; got ${GITHUB_REF}."
-            exit 1
-          fi
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const stableTag = /^refs\/tags\/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/
+            if (!stableTag.test(context.ref)) {
+              throw new Error(
+                `OCI publication requires a stable vMAJOR.MINOR.PATCH tag; got ${context.ref}.`,
+              )
+            }
 
       - name: Set up publisher tools
         uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
@@ -129,86 +131,127 @@ jobs:
 
       - name: Verify OCI image contents
         id: stage
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           EXPECTED_IMAGE_DIGEST: ${{ inputs.image-digest }}
-        shell: bash
-        run: |
-          set -euo pipefail
+        with:
+          script: |
+            const crypto = require('crypto')
+            const fs = require('fs')
 
-          expected=${EXPECTED_IMAGE_DIGEST,,}
-          if [[ ! "${expected}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::Invalid image digest: ${EXPECTED_IMAGE_DIGEST}"
-            exit 1
-          fi
+            const digestPattern = /^sha256:[0-9a-f]{64}$/
+            const expected = String(process.env.EXPECTED_IMAGE_DIGEST ?? '').toLowerCase()
+            if (!digestPattern.test(expected)) {
+              throw new Error(`Invalid image digest: ${process.env.EXPECTED_IMAGE_DIGEST}`)
+            }
 
-          test -f oci-image/layout/oci-layout
-          test -f oci-image/layout/index.json
-          test -f oci-image/image-digest.txt
-          test -f oci-image/sboms/sbom-x86_64.spdx.json
-          test -f oci-image/sboms/sbom-aarch64.spdx.json
+            const requireFile = (file) => {
+              let stat
+              try {
+                stat = fs.lstatSync(file)
+              } catch {
+                throw new Error(`Required OCI artifact file is missing: ${file}`)
+              }
+              if (!stat.isFile()) {
+                throw new Error(`Required OCI artifact path is not a regular file: ${file}`)
+              }
+            }
+            const readJson = (file) => {
+              requireFile(file)
+              try {
+                return JSON.parse(fs.readFileSync(file, 'utf8'))
+              } catch (error) {
+                throw new Error(`Invalid JSON in ${file}: ${error.message}`)
+              }
+            }
 
-          recorded=$(tr -d '\r\n' < oci-image/image-digest.txt)
-          computed=sha256:$(sha256sum oci-image/layout/index.json | cut -d' ' -f1)
-          if [[ "${recorded}" != "${expected}" || "${computed}" != "${expected}" ]]; then
-            echo "::error::OCI index digest mismatch: expected ${expected}, recorded ${recorded}, computed ${computed}."
-            exit 1
-          fi
+            requireFile('oci-image/layout/oci-layout')
+            requireFile('oci-image/layout/index.json')
+            requireFile('oci-image/image-digest.txt')
+            const amd64Sbom = 'oci-image/sboms/sbom-x86_64.spdx.json'
+            const arm64Sbom = 'oci-image/sboms/sbom-aarch64.spdx.json'
+            readJson(amd64Sbom)
+            readJson(arm64Sbom)
 
-          jq -e '
-            (.schemaVersion == 2) and
-            (.mediaType == "application/vnd.oci.image.index.v1+json") and
-            ((.manifests | length) == 2) and
-            (([.manifests[].platform.architecture] | sort) == ["amd64", "arm64"]) and
-            (all(.manifests[]; .platform.os == "linux"))
-          ' oci-image/layout/index.json >/dev/null
-          jq -e . oci-image/sboms/sbom-x86_64.spdx.json >/dev/null
-          jq -e . oci-image/sboms/sbom-aarch64.spdx.json >/dev/null
+            const indexBytes = fs.readFileSync('oci-image/layout/index.json')
+            const recorded = fs.readFileSync('oci-image/image-digest.txt', 'utf8').trim()
+            const computed = `sha256:${crypto.createHash('sha256').update(indexBytes).digest('hex')}`
+            if (recorded !== expected || computed !== expected) {
+              throw new Error(
+                `OCI index digest mismatch: expected ${expected}, ` +
+                  `recorded ${recorded}, computed ${computed}.`,
+              )
+            }
 
-          amd64_digest=$(jq -er '
-            .manifests[] |
-            select(.platform.os == "linux" and .platform.architecture == "amd64") |
-            .digest
-          ' oci-image/layout/index.json)
-          arm64_digest=$(jq -er '
-            .manifests[] |
-            select(.platform.os == "linux" and .platform.architecture == "arm64") |
-            .digest
-          ' oci-image/layout/index.json)
-          for digest in "${amd64_digest}" "${arm64_digest}"; do
-            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
-            test -f "oci-image/layout/blobs/sha256/${digest#sha256:}"
-          done
+            const index = JSON.parse(indexBytes.toString('utf8'))
+            if (
+              index.schemaVersion !== 2 ||
+              index.mediaType !== 'application/vnd.oci.image.index.v1+json' ||
+              !Array.isArray(index.manifests) ||
+              index.manifests.length !== 2
+            ) {
+              throw new Error('OCI index must contain exactly two platform manifests.')
+            }
 
-          version=${GITHUB_REF_NAME#v}
-          IFS=. read -r major minor patch <<< "${version}"
-          test -n "${major}"
-          test -n "${minor}"
-          test -n "${patch}"
-          image_name=ghcr.io/${GITHUB_REPOSITORY,,}
+            const platforms = index.manifests
+              .map((manifest) => `${manifest.platform?.os}/${manifest.platform?.architecture}`)
+              .sort()
+            if (platforms.join(',') !== 'linux/amd64,linux/arm64') {
+              throw new Error(`Unexpected OCI platforms: ${platforms.join(', ')}`)
+            }
 
-          {
-            echo "image-name=${image_name}"
-            echo "version=${version}"
-            echo "exact-tag=${version}"
-            echo "minor-tag=${major}.${minor}"
-            echo "major-tag=${major}"
-            echo "image-digest=${expected}"
-            echo "amd64-digest=${amd64_digest}"
-            echo "arm64-digest=${arm64_digest}"
-          } >> "${GITHUB_OUTPUT}"
+            const descriptor = (architecture) => index.manifests.find(
+              (manifest) =>
+                manifest.platform.os === 'linux' &&
+                manifest.platform.architecture === architecture,
+            )
+            const amd64Digest = String(descriptor('amd64').digest ?? '')
+            const arm64Digest = String(descriptor('arm64').digest ?? '')
+            for (const digest of [amd64Digest, arm64Digest]) {
+              if (!digestPattern.test(digest)) {
+                throw new Error(`Invalid platform manifest digest: ${digest}`)
+              }
+              requireFile(`oci-image/layout/blobs/sha256/${digest.slice('sha256:'.length)}`)
+            }
+
+            const version = String(process.env.GITHUB_REF_NAME ?? '').replace(/^v/, '')
+            const [major, minor, patch, ...extra] = version.split('.')
+            if (!major || !minor || !patch || extra.length !== 0) {
+              throw new Error(`Invalid stable version: ${version}`)
+            }
+            const imageName =
+              `ghcr.io/${context.repo.owner.toLowerCase()}/${context.repo.repo.toLowerCase()}`
+
+            core.setOutput('image-name', imageName)
+            core.setOutput('version', version)
+            core.setOutput('exact-tag', version)
+            core.setOutput('minor-tag', `${major}.${minor}`)
+            core.setOutput('major-tag', major)
+            core.setOutput('image-digest', expected)
+            core.setOutput('amd64-digest', amd64Digest)
+            core.setOutput('arm64-digest', arm64Digest)
 
       - name: Log in to GHCR
         if: inputs.publish-image
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GHCR_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf '%s' "${GHCR_TOKEN}" |
-            oras login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+        with:
+          script: |
+            const token = String(process.env.GHCR_TOKEN ?? '')
+            if (!token) {
+              throw new Error('GitHub token is empty.')
+            }
+            core.setSecret(token)
+            await exec.exec(
+              'oras',
+              ['login', 'ghcr.io', '--username', context.actor, '--password-stdin'],
+              {input: Buffer.from(`${token}\n`)},
+            )
       - name: Plan OCI image tags
         if: inputs.publish-image
         id: tags
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           EXACT_TAG: ${{ steps.stage.outputs.exact-tag }}
           EXPECTED_DIGEST: ${{ steps.stage.outputs.image-digest }}
@@ -216,189 +259,226 @@ jobs:
           MAJOR_TAG: ${{ steps.stage.outputs.major-tag }}
           MINOR_TAG: ${{ steps.stage.outputs.minor-tag }}
           VERSION: ${{ steps.stage.outputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
+        with:
+          script: |
+            const stableVersion = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/
+            const imageName = process.env.IMAGE_NAME
+            const expectedDigest = process.env.EXPECTED_DIGEST
+            const version = process.env.VERSION
+            const tags = []
 
-          resolve_optional() {
-            local reference=$1
-            local error_file=${RUNNER_TEMP}/oras-resolve-error
-            local digest
-            local message
-            local status
-
-            if digest=$(oras resolve "${reference}" 2>"${error_file}"); then
-              printf '%s\n' "${digest}"
-              return 0
-            else
-              status=$?
-              message=$(<"${error_file}")
-              if [[ "${status}" -eq 1 && "${message}" == *': not found' ]]; then
-                return 1
-              fi
-              printf '%s\n' "${message}" >&2
-              return "${status}"
-            fi
-          }
-
-          component_is_greater() {
-            local left=$1
-            local right=$2
-
-            if (( ${#left} != ${#right} )); then
-              (( ${#left} > ${#right} ))
-              return
-            fi
-            [[ "${left}" > "${right}" ]]
-          }
-
-          version_is_newer() {
-            local candidate=$1
-            local current=$2
-            local index
-            local -a candidate_parts
-            local -a current_parts
-
-            IFS=. read -ra candidate_parts <<< "${candidate}"
-            IFS=. read -ra current_parts <<< "${current}"
-            for index in 0 1 2; do
-              if component_is_greater "${candidate_parts[index]}" "${current_parts[index]}"; then
-                return 0
-              fi
-              if component_is_greater "${current_parts[index]}" "${candidate_parts[index]}"; then
-                return 1
-              fi
-            done
-            return 1
-          }
-
-          stable_version='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-          tags=()
-
-          if current=$(resolve_optional "${IMAGE_NAME}:${EXACT_TAG}"); then
-            if [[ "${current}" != "${EXPECTED_DIGEST}" ]]; then
-              echo "::error::Immutable tag ${IMAGE_NAME}:${EXACT_TAG} resolves to ${current}; expected ${EXPECTED_DIGEST}."
-              exit 1
-            fi
-            echo "Exact-version tag ${EXACT_TAG} already resolves to the authoritative digest."
-          else
-            status=$?
-            if [[ "${status}" -ne 1 ]]; then
-              exit "${status}"
-            fi
-            tags+=("${EXACT_TAG}")
-          fi
-
-          plan_channel_tag() {
-            local tag=$1
-            local scope=$2
-            local current
-            local current_version
-
-            if current=$(resolve_optional "${IMAGE_NAME}:${tag}"); then
-              if [[ "${current}" == "${EXPECTED_DIGEST}" ]]; then
-                echo "Channel tag ${tag} already resolves to the authoritative digest."
-                return
-              fi
-
-              current_version=$(
-                oras manifest fetch "${IMAGE_NAME}:${tag}" |
-                  jq -er '.annotations["org.opencontainers.image.version"]'
+            const runOras = async (args, missingIsNull = false) => {
+              const result = await exec.getExecOutput('oras', args, {
+                ignoreReturnCode: true,
+                silent: true,
+              })
+              if (result.exitCode === 0) {
+                return result.stdout.trim()
+              }
+              if (
+                missingIsNull &&
+                result.exitCode === 1 &&
+                result.stderr.includes(': not found')
+              ) {
+                return null
+              }
+              throw new Error(
+                `oras ${args[0]} failed with exit code ${result.exitCode}: ` +
+                  result.stderr.trim(),
               )
-              if [[ ! "${current_version}" =~ ${stable_version} ]]; then
-                echo "::error::Channel tag ${IMAGE_NAME}:${tag} has invalid version annotation ${current_version}."
-                exit 1
-              fi
-              case "${scope}" in
-                minor)
-                  if [[ "${current_version}" != "${MINOR_TAG}."* ]]; then
-                    echo "::error::Channel tag ${tag} points outside its minor release line: ${current_version}."
-                    exit 1
-                  fi
-                  ;;
-                major)
-                  if [[ "${current_version}" != "${MAJOR_TAG}."* ]]; then
-                    echo "::error::Channel tag ${tag} points outside its major release line: ${current_version}."
-                    exit 1
-                  fi
-                  ;;
-                latest) ;;
-                *)
-                  echo "::error::Unknown channel scope ${scope}."
-                  exit 1
-                  ;;
-              esac
+            }
+            const resolve = (reference) => runOras(['resolve', reference], true)
+            const parseVersion = (value) => {
+              const match = stableVersion.exec(String(value ?? ''))
+              if (!match) {
+                throw new Error(`Invalid stable version annotation: ${value}`)
+              }
+              return match.slice(1).map((component) => BigInt(component))
+            }
+            const compareVersions = (left, right) => {
+              const leftParts = parseVersion(left)
+              const rightParts = parseVersion(right)
+              for (let index = 0; index < leftParts.length; index += 1) {
+                if (leftParts[index] > rightParts[index]) {
+                  return 1
+                }
+                if (leftParts[index] < rightParts[index]) {
+                  return -1
+                }
+              }
+              return 0
+            }
 
-              if version_is_newer "${VERSION}" "${current_version}"; then
-                tags+=("${tag}")
-              else
-                echo "Keeping ${IMAGE_NAME}:${tag} at newer release ${current_version}."
-              fi
-            else
-              status=$?
-              if [[ "${status}" -ne 1 ]]; then
-                exit "${status}"
-              fi
-              tags+=("${tag}")
-            fi
-          }
+            const exactTag = process.env.EXACT_TAG
+            const exactDigest = await resolve(`${imageName}:${exactTag}`)
+            if (exactDigest === null) {
+              tags.push(exactTag)
+            } else if (exactDigest !== expectedDigest) {
+              throw new Error(
+                `Immutable tag ${imageName}:${exactTag} resolves to ${exactDigest}; ` +
+                  `expected ${expectedDigest}.`,
+              )
+            } else {
+              core.info(
+                `Exact-version tag ${exactTag} already resolves to the authoritative digest.`,
+              )
+            }
 
-          plan_channel_tag "${MINOR_TAG}" minor
-          plan_channel_tag "${MAJOR_TAG}" major
-          plan_channel_tag latest latest
+            const candidateParts = parseVersion(version)
+            const planChannel = async (tag, scope) => {
+              const currentDigest = await resolve(`${imageName}:${tag}`)
+              if (currentDigest === null) {
+                tags.push(tag)
+                return
+              }
+              if (currentDigest === expectedDigest) {
+                core.info(`Channel tag ${tag} already resolves to the authoritative digest.`)
+                return
+              }
 
-          tag_list=$(IFS=,; printf '%s' "${tags[*]}")
-          echo "tags=${tag_list}" >> "${GITHUB_OUTPUT}"
+              const manifest = JSON.parse(await runOras([
+                'manifest',
+                'fetch',
+                `${imageName}:${tag}`,
+              ]))
+              const currentVersion = manifest.annotations?.['org.opencontainers.image.version']
+              const currentParts = parseVersion(currentVersion)
+              if (
+                scope === 'minor' &&
+                (
+                  currentParts[0] !== candidateParts[0] ||
+                  currentParts[1] !== candidateParts[1]
+                )
+              ) {
+                throw new Error(
+                  `Channel tag ${tag} points outside its minor release line: ${currentVersion}.`,
+                )
+              }
+              if (scope === 'major' && currentParts[0] !== candidateParts[0]) {
+                throw new Error(
+                  `Channel tag ${tag} points outside its major release line: ${currentVersion}.`,
+                )
+              }
+              if (!['minor', 'major', 'latest'].includes(scope)) {
+                throw new Error(`Unknown channel scope ${scope}.`)
+              }
+
+              const comparison = compareVersions(version, currentVersion)
+              if (comparison > 0) {
+                tags.push(tag)
+              } else if (comparison < 0) {
+                core.info(
+                  `Keeping ${imageName}:${tag} at newer release ${currentVersion}.`,
+                )
+              } else {
+                throw new Error(
+                  `Channel tag ${imageName}:${tag} has version ${currentVersion} ` +
+                    `but resolves to ${currentDigest}; expected ${expectedDigest}.`,
+                )
+              }
+            }
+
+            await planChannel(process.env.MINOR_TAG, 'minor')
+            await planChannel(process.env.MAJOR_TAG, 'major')
+            await planChannel('latest', 'latest')
+            core.setOutput('tags', tags.join(','))
 
       - name: Publish OCI image by digest
         if: inputs.publish-image
         id: push
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           EXPECTED_DIGEST: ${{ steps.stage.outputs.image-digest }}
           IMAGE_NAME: ${{ steps.stage.outputs.image-name }}
-        shell: bash
-        run: |
-          set -euo pipefail
+        with:
+          script: |
+            const fs = require('fs')
+            const path = require('path')
+            const expectedDigest = process.env.EXPECTED_DIGEST
+            const imageName = process.env.IMAGE_NAME
+            const indexPath = 'oci-image/layout/index.json'
+            const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'))
+            const pushedBlobs = new Set()
 
-          while IFS=$'\t' read -r manifest_digest media_type; do
-            manifest_path="oci-image/layout/blobs/sha256/${manifest_digest#sha256:}"
+            for (const descriptor of index.manifests) {
+              const manifestPath = path.join(
+                'oci-image',
+                'layout',
+                'blobs',
+                'sha256',
+                descriptor.digest.slice('sha256:'.length),
+              )
+              const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+              const blobDigests = [
+                manifest.config?.digest,
+                ...(manifest.layers ?? []).map((layer) => layer.digest),
+              ]
+              for (const digest of blobDigests) {
+                if (!digest || pushedBlobs.has(digest)) {
+                  continue
+                }
+                await exec.exec('oras', [
+                  'blob',
+                  'push',
+                  '--no-tty',
+                  `${imageName}@${digest}`,
+                  path.join(
+                    'oci-image',
+                    'layout',
+                    'blobs',
+                    'sha256',
+                    digest.slice('sha256:'.length),
+                  ),
+                ])
+                pushedBlobs.add(digest)
+              }
+              await exec.exec('oras', [
+                'manifest',
+                'push',
+                '--media-type',
+                descriptor.mediaType,
+                `${imageName}@${descriptor.digest}`,
+                manifestPath,
+              ])
+            }
 
-            while IFS= read -r blob_digest; do
-              oras blob push \
-                --no-tty \
-                "${IMAGE_NAME}@${blob_digest}" \
-                "oci-image/layout/blobs/sha256/${blob_digest#sha256:}"
-            done < <(jq -r '.config.digest, .layers[].digest' "${manifest_path}")
+            await exec.exec('oras', [
+              'manifest',
+              'push',
+              '--media-type',
+              'application/vnd.oci.image.index.v1+json',
+              `${imageName}@${expectedDigest}`,
+              indexPath,
+            ])
+            const resolved = await exec.getExecOutput(
+              'oras',
+              ['resolve', `${imageName}@${expectedDigest}`],
+              {silent: true},
+            )
+            const actual = resolved.stdout.trim()
+            if (actual !== expectedDigest) {
+              throw new Error(
+                `Published ${imageName}@${expectedDigest} resolved to ${actual}.`,
+              )
+            }
 
-            oras manifest push \
-              --media-type "${media_type}" \
-              "${IMAGE_NAME}@${manifest_digest}" \
-              "${manifest_path}"
-          done < <(jq -r '.manifests[] | [.digest, .mediaType] | @tsv' oci-image/layout/index.json)
-
-          oras manifest push \
-            --media-type application/vnd.oci.image.index.v1+json \
-            "${IMAGE_NAME}@${EXPECTED_DIGEST}" \
-            oci-image/layout/index.json
-
-          actual=$(oras resolve "${IMAGE_NAME}@${EXPECTED_DIGEST}")
-          if [[ "${actual}" != "${EXPECTED_DIGEST}" ]]; then
-            echo "::error::Published ${IMAGE_NAME}@${EXPECTED_DIGEST} resolved to ${actual}."
-            exit 1
-          fi
-
-          {
-            echo "digest=${EXPECTED_DIGEST}"
-            echo "reference=${IMAGE_NAME}@${EXPECTED_DIGEST}"
-          } >> "${GITHUB_OUTPUT}"
+            core.setOutput('digest', expectedDigest)
+            core.setOutput('reference', `${imageName}@${expectedDigest}`)
 
 
       - name: Sign OCI image and platform manifests
         if: inputs.publish-image
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           IMAGE_REFERENCE: ${{ steps.push.outputs.reference }}
-        shell: bash
-        run: cosign sign --yes --recursive "${IMAGE_REFERENCE}"
+        with:
+          script: |
+            await exec.exec('cosign', [
+              'sign',
+              '--yes',
+              '--recursive',
+              process.env.IMAGE_REFERENCE,
+            ])
 
       - name: Attest OCI image provenance
         if: inputs.publish-image
@@ -430,38 +510,60 @@ jobs:
           push-to-registry: true
       - name: Publish verified OCI image tags
         if: inputs.publish-image
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           EXACT_TAG: ${{ steps.stage.outputs.exact-tag }}
           EXPECTED_DIGEST: ${{ steps.stage.outputs.image-digest }}
           IMAGE_NAME: ${{ steps.stage.outputs.image-name }}
           IMAGE_TAGS: ${{ steps.tags.outputs.tags }}
-        shell: bash
-        run: |
-          set -euo pipefail
+        with:
+          script: |
+            const expectedDigest = process.env.EXPECTED_DIGEST
+            const imageName = process.env.IMAGE_NAME
+            const tags = String(process.env.IMAGE_TAGS ?? '')
+              .split(',')
+              .filter(Boolean)
 
-          if [[ -n "${IMAGE_TAGS}" ]]; then
-            IFS=, read -ra tags <<< "${IMAGE_TAGS}"
-            oras tag \
-              --concurrency 1 \
-              "${IMAGE_NAME}@${EXPECTED_DIGEST}" \
-              "${tags[@]}"
+            if (tags.length > 0) {
+              await exec.exec('oras', [
+                'tag',
+                '--concurrency',
+                '1',
+                `${imageName}@${expectedDigest}`,
+                ...tags,
+              ])
+              for (const tag of tags) {
+                const resolved = await exec.getExecOutput(
+                  'oras',
+                  ['resolve', `${imageName}:${tag}`],
+                  {silent: true},
+                )
+                const actual = resolved.stdout.trim()
+                if (actual !== expectedDigest) {
+                  throw new Error(
+                    `Published ${imageName}:${tag} resolved to ${actual}; ` +
+                      `expected ${expectedDigest}.`,
+                  )
+                }
+              }
+            }
 
-            for tag in "${tags[@]}"; do
-              actual=$(oras resolve "${IMAGE_NAME}:${tag}")
-              if [[ "${actual}" != "${EXPECTED_DIGEST}" ]]; then
-                echo "::error::Published ${IMAGE_NAME}:${tag} resolved to ${actual}; expected ${EXPECTED_DIGEST}."
-                exit 1
-              fi
-            done
-          fi
-
-          exact=$(oras resolve "${IMAGE_NAME}:${EXACT_TAG}")
-          if [[ "${exact}" != "${EXPECTED_DIGEST}" ]]; then
-            echo "::error::Exact tag ${IMAGE_NAME}:${EXACT_TAG} resolves to ${exact}; expected ${EXPECTED_DIGEST}."
-            exit 1
-          fi
+            const exact = await exec.getExecOutput(
+              'oras',
+              ['resolve', `${imageName}:${process.env.EXACT_TAG}`],
+              {silent: true},
+            )
+            const exactDigest = exact.stdout.trim()
+            if (exactDigest !== expectedDigest) {
+              throw new Error(
+                `Exact tag ${imageName}:${process.env.EXACT_TAG} resolves to ` +
+                  `${exactDigest}; expected ${expectedDigest}.`,
+              )
+            }
 
       - name: Log out of GHCR
         if: always() && inputs.publish-image
-        shell: bash
-        run: oras logout ghcr.io
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await exec.exec('oras', ['logout', 'ghcr.io'])
