@@ -13,6 +13,19 @@ This plan implements Revision 3 without reopening its decisions. The following r
 - Merge through GitHub PRs with squash merge. Each PR title below is the Conventional Commit title that must become the squash commit subject. Use one Worktrunk worktree under `.wt/` per PR.
 - “Current lines” below refer to the checked-in workflows inventoried on 2026-08-18. When earlier PRs shift physical line numbers, target the named step and inventory ID, not a guessed new line number.
 
+## Standing execution method for every PR
+
+This is the fixed process for each PR in the spine. It does not need restating per PR.
+
+1. **Worktree.** One Worktrunk worktree per PR under `.wt/`, created from fetched `origin/main`. All agents work in that path; nobody touches the main checkout.
+2. **Implementation — parallel programmer agents, one owner per file.** Split the PR by ownership domain (typically: Go source; build/packaging/release config; Actions wiring; documentation) and spawn them in one batch. Every file has exactly one owning agent; cross-domain needs are requested from the owner over `hub`, never edited directly. Cross-agent contracts (command surface, JSON envelope, exit codes, stamped values, asset naming, file paths) are decided **before** spawning and stated in the batch context.
+3. **No agent runs project-wide validation.** Implementation agents compile and test only their own packages. Whole-repo build, lint, and test run once, in the parent, after all agents finish — concurrent siblings otherwise fail each other's in-flight edits.
+4. **Review — one long-lived `Reviewer` agent, at most 2 rounds.** Spawn `Reviewer` once for the program and address it by name for every PR and every round; never spawn a replacement. Round 1 reviews the full diff; the parent dispatches fixes; round 2 re-reviews only the fixes and the files they touched. Stop after round 2: remaining non-blocking findings are recorded in the journal as follow-ups, not chased.
+5. **Conformance — one long-lived `Conformance` agent, exactly 1 round.** Spawn `Conformance` once for the program and reuse it. It audits the diff against `AGENTS.md` rule by rule (A/T/R/P/D/I/E/L) and returns per-rule verdicts. Blocking violations are fixed before the PR opens; judgment-call findings are recorded.
+6. **Parent gate before opening the PR.** The parent runs `mise exec -- moon run root:check` (format, lint, build, test, protocol stamp), exercises the changed behavior directly (not just its tests), and confirms the PR's "Must NOT contain" list is honored.
+7. **Open the PR for human acceptance.** Conventional Commit title from the spine table, body summarizing scope, verification evidence, and any recorded follow-ups. The parent never merges: a human accepts.
+8. **Journal.** Record the PR's outcome, review/conformance findings, and follow-ups in the bound session's `NOTES.md` before yielding.
+
 ## 1. Plan summary
 
 | PR | Conventional Commit title | Slice | What lands | What it replaces | Dependency | Merge gate |
