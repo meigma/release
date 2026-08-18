@@ -12,6 +12,15 @@ on:
       artifact-digest:
         description: SHA-256 digest of the authoritative release-assets artifact.
         value: ${{ jobs.release-assets.outputs.artifact-digest }}
+      oci-input-artifact-id:
+        description: ID of the canonical Linux binaries artifact.
+        value: ${{ jobs.release-assets.outputs.oci-input-artifact-id }}
+      oci-input-artifact-url:
+        description: URL of the canonical Linux binaries artifact.
+        value: ${{ jobs.release-assets.outputs.oci-input-artifact-url }}
+      oci-input-artifact-digest:
+        description: SHA-256 digest of the canonical Linux binaries artifact.
+        value: ${{ jobs.release-assets.outputs.oci-input-artifact-digest }}
 
 permissions: {}
 
@@ -24,6 +33,9 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       artifact-url: ${{ steps.upload.outputs.artifact-url }}
       artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      oci-input-artifact-id: ${{ steps.upload-oci-input.outputs.artifact-id }}
+      oci-input-artifact-url: ${{ steps.upload-oci-input.outputs.artifact-url }}
+      oci-input-artifact-digest: ${{ steps.upload-oci-input.outputs.artifact-digest }}
     permissions:
       contents: read
       id-token: write
@@ -80,6 +92,43 @@ jobs:
           sha256sum --check checksums.txt
           test -s checksums.txt.sigstore.json
 
+      - name: Verify canonical Linux binaries
+        shell: bash
+        run: |
+          mapfile -t binaries < <(
+            jq -r '
+              .[]
+              | select(.type == "Binary" and .goos == "linux")
+              | [.goarch, .path]
+              | @tsv
+            ' dist/artifacts.json
+          )
+          if [[ ${#binaries[@]} -ne 2 ]]; then
+            echo "::error::Expected two canonical Linux binaries; found ${#binaries[@]}."
+            exit 1
+          fi
+          printf '%s\n' "${binaries[@]}" |
+            cut -f1 |
+            sort |
+            diff -u <(printf 'amd64\narm64\n') -
+
+          for record in "${binaries[@]}"; do
+            path=${record#*$'\t'}
+            test -x "${path}"
+          done
+
+      - name: Upload canonical Linux binaries
+        id: upload-oci-input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-build-inputs
+          path: |
+            dist/artifacts.json
+            dist/*_linux_amd64*/**
+            dist/*_linux_arm64*/**
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
       - name: Upload authoritative release assets
         id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

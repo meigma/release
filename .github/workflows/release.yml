@@ -19,10 +19,23 @@ jobs:
       contents: read
       id-token: write
     uses: ./.github/workflows/go-pre-publish.yml
+  oci-image:
+    name: Build OCI image
+    needs: release-assets
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/go-oci-build.yml
+    with:
+      artifact-id: ${{ needs.release-assets.outputs.oci-input-artifact-id }}
+      artifact-digest: ${{ needs.release-assets.outputs.oci-input-artifact-digest }}
+
 
   github-release:
     name: Publish GitHub Release
-    needs: release-assets
+    needs:
+      - release-assets
+      - oci-image
     permissions:
       actions: read
       artifact-metadata: write
