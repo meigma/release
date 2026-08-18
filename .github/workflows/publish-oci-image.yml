@@ -1,0 +1,274 @@
+name: Reusable OCI Image Publisher
+
+on:
+  workflow_call:
+    inputs:
+      artifact-id:
+        description: ID of the authoritative OCI image artifact.
+        required: true
+        type: string
+      artifact-digest:
+        description: Expected SHA-256 digest of the authoritative OCI image artifact.
+        required: true
+        type: string
+      image-digest:
+        description: Expected SHA-256 digest of the OCI image index.
+        required: true
+        type: string
+      publish-image:
+        description: Publish, sign, and attest the image after verification.
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      image-name:
+        description: Canonical GHCR image name.
+        value: ${{ jobs.publish.outputs.image-name }}
+      image-reference:
+        description: Published image reference pinned by digest; empty when publication is disabled.
+        value: ${{ jobs.publish.outputs.image-reference }}
+      image-digest:
+        description: Verified OCI image index digest.
+        value: ${{ jobs.publish.outputs.image-digest }}
+      provenance-attestation-url:
+        description: GitHub provenance attestation URL; empty when publication is disabled.
+        value: ${{ jobs.publish.outputs.provenance-attestation-url }}
+      amd64-sbom-attestation-url:
+        description: GitHub amd64 SBOM attestation URL; empty when publication is disabled.
+        value: ${{ jobs.publish.outputs.amd64-sbom-attestation-url }}
+      arm64-sbom-attestation-url:
+        description: GitHub arm64 SBOM attestation URL; empty when publication is disabled.
+        value: ${{ jobs.publish.outputs.arm64-sbom-attestation-url }}
+
+jobs:
+  publish:
+    name: Publish OCI image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      image-name: ${{ steps.stage.outputs.image-name }}
+      image-reference: ${{ steps.push.outputs.reference }}
+      image-digest: ${{ steps.stage.outputs.image-digest }}
+      provenance-attestation-url: ${{ steps.provenance.outputs.attestation-url }}
+      amd64-sbom-attestation-url: ${{ steps.amd64-sbom.outputs.attestation-url }}
+      arm64-sbom-attestation-url: ${{ steps.arm64-sbom.outputs.attestation-url }}
+    steps:
+      - name: Require a stable release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::OCI publication requires a stable vMAJOR.MINOR.PATCH tag; got ${GITHUB_REF}."
+            exit 1
+          fi
+
+      - name: Set up publisher tools
+        uses: jdx/mise-action@c320a4ae849d7c0fa92bb80e9b79e0456b4340b0 # v4.2.5
+        with:
+          version: 2026.8.8
+          mise_toml: |
+            [tools]
+            "aqua:oras-project/oras" = "1.3.3"
+            "aqua:sigstore/cosign" = "3.1.3"
+          install_args: aqua:oras-project/oras aqua:sigstore/cosign
+          cache: true
+
+      - name: Verify authoritative OCI artifact
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ARTIFACT_ID: ${{ inputs.artifact-id }}
+          EXPECTED_DIGEST: ${{ inputs.artifact-digest }}
+        with:
+          retries: 3
+          script: |
+            const artifactId = Number(process.env.ARTIFACT_ID)
+            if (!Number.isSafeInteger(artifactId) || artifactId <= 0) {
+              throw new Error(`Invalid artifact ID: ${process.env.ARTIFACT_ID}`)
+            }
+
+            const {data: artifact} = await github.rest.actions.getArtifact({
+              ...context.repo,
+              artifact_id: artifactId,
+            })
+            if (artifact.expired) {
+              throw new Error(`Artifact ${artifactId} has expired.`)
+            }
+            if (artifact.workflow_run?.id !== Number(context.runId)) {
+              throw new Error(
+                `Artifact ${artifactId} belongs to workflow run ` +
+                  `${artifact.workflow_run?.id}, expected ${context.runId}.`,
+              )
+            }
+            const normalize = (digest) => String(digest ?? '')
+              .replace(/^sha256:/, '')
+              .toLowerCase()
+            const expected = normalize(process.env.EXPECTED_DIGEST)
+            const actual = normalize(artifact.digest)
+            if (!expected || actual !== expected) {
+              throw new Error(
+                `Artifact digest mismatch: expected ${process.env.EXPECTED_DIGEST}, got ${artifact.digest}.`,
+              )
+            }
+
+      - name: Download authoritative OCI image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ inputs.artifact-id }}
+          path: oci-image
+          digest-mismatch: error
+
+      - name: Verify OCI image contents
+        id: stage
+        env:
+          EXPECTED_IMAGE_DIGEST: ${{ inputs.image-digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected=${EXPECTED_IMAGE_DIGEST,,}
+          if [[ ! "${expected}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Invalid image digest: ${EXPECTED_IMAGE_DIGEST}"
+            exit 1
+          fi
+
+          test -f oci-image/layout/oci-layout
+          test -f oci-image/layout/index.json
+          test -f oci-image/image-digest.txt
+          test -f oci-image/sboms/sbom-x86_64.spdx.json
+          test -f oci-image/sboms/sbom-aarch64.spdx.json
+
+          recorded=$(tr -d '\r\n' < oci-image/image-digest.txt)
+          computed=sha256:$(sha256sum oci-image/layout/index.json | cut -d' ' -f1)
+          if [[ "${recorded}" != "${expected}" || "${computed}" != "${expected}" ]]; then
+            echo "::error::OCI index digest mismatch: expected ${expected}, recorded ${recorded}, computed ${computed}."
+            exit 1
+          fi
+
+          jq -e '
+            (.schemaVersion == 2) and
+            (.mediaType == "application/vnd.oci.image.index.v1+json") and
+            ((.manifests | length) == 2) and
+            (([.manifests[].platform.architecture] | sort) == ["amd64", "arm64"]) and
+            (all(.manifests[]; .platform.os == "linux"))
+          ' oci-image/layout/index.json >/dev/null
+          jq -e . oci-image/sboms/sbom-x86_64.spdx.json >/dev/null
+          jq -e . oci-image/sboms/sbom-aarch64.spdx.json >/dev/null
+
+          amd64_digest=$(jq -er '
+            .manifests[] |
+            select(.platform.os == "linux" and .platform.architecture == "amd64") |
+            .digest
+          ' oci-image/layout/index.json)
+          arm64_digest=$(jq -er '
+            .manifests[] |
+            select(.platform.os == "linux" and .platform.architecture == "arm64") |
+            .digest
+          ' oci-image/layout/index.json)
+          for digest in "${amd64_digest}" "${arm64_digest}"; do
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            test -f "oci-image/layout/blobs/sha256/${digest#sha256:}"
+          done
+
+          version=${GITHUB_REF_NAME#v}
+          IFS=. read -r major minor patch <<< "${version}"
+          test -n "${major}"
+          test -n "${minor}"
+          test -n "${patch}"
+          image_name=ghcr.io/${GITHUB_REPOSITORY,,}
+          image_tags=${version},${major}.${minor},${major},latest
+
+          {
+            echo "image-name=${image_name}"
+            echo "image-tags=${image_tags}"
+            echo "image-digest=${expected}"
+            echo "amd64-digest=${amd64_digest}"
+            echo "arm64-digest=${arm64_digest}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        if: inputs.publish-image
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" |
+            oras login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Publish OCI image
+        if: inputs.publish-image
+        id: push
+        env:
+          EXPECTED_DIGEST: ${{ steps.stage.outputs.image-digest }}
+          IMAGE_NAME: ${{ steps.stage.outputs.image-name }}
+          IMAGE_TAGS: ${{ steps.stage.outputs.image-tags }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          oras cp \
+            --from-oci-layout \
+            --no-tty \
+            "oci-image/layout@${EXPECTED_DIGEST}" \
+            "${IMAGE_NAME}:${IMAGE_TAGS}"
+
+          IFS=, read -ra tags <<< "${IMAGE_TAGS}"
+          for tag in "${tags[@]}"; do
+            actual=$(oras resolve "${IMAGE_NAME}:${tag}")
+            if [[ "${actual}" != "${EXPECTED_DIGEST}" ]]; then
+              echo "::error::Published ${IMAGE_NAME}:${tag} resolved to ${actual}; expected ${EXPECTED_DIGEST}."
+              exit 1
+            fi
+          done
+
+          {
+            echo "digest=${EXPECTED_DIGEST}"
+            echo "reference=${IMAGE_NAME}@${EXPECTED_DIGEST}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Sign OCI image and platform manifests
+        if: inputs.publish-image
+        env:
+          IMAGE_REFERENCE: ${{ steps.push.outputs.reference }}
+        shell: bash
+        run: cosign sign --yes --recursive "${IMAGE_REFERENCE}"
+
+      - name: Attest OCI image provenance
+        if: inputs.publish-image
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.stage.outputs.image-name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest amd64 image SBOM
+        if: inputs.publish-image
+        id: amd64-sbom
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.stage.outputs.image-name }}
+          subject-digest: ${{ steps.stage.outputs.amd64-digest }}
+          sbom-path: oci-image/sboms/sbom-x86_64.spdx.json
+          push-to-registry: true
+
+      - name: Attest arm64 image SBOM
+        if: inputs.publish-image
+        id: arm64-sbom
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.stage.outputs.image-name }}
+          subject-digest: ${{ steps.stage.outputs.arm64-digest }}
+          sbom-path: oci-image/sboms/sbom-aarch64.spdx.json
+          push-to-registry: true
+
+      - name: Log out of GHCR
+        if: always() && inputs.publish-image
+        shell: bash
+        run: oras logout ghcr.io

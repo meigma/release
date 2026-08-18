@@ -29,6 +29,23 @@ jobs:
     with:
       artifact-id: ${{ needs.release-assets.outputs.oci-input-artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.oci-input-artifact-digest }}
+  oci-publish:
+    name: Publish OCI image
+    needs: oci-image
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/publish-oci-image.yml
+    with:
+      artifact-id: ${{ needs.oci-image.outputs.artifact-id }}
+      artifact-digest: ${{ needs.oci-image.outputs.artifact-digest }}
+      image-digest: ${{ needs.oci-image.outputs.image-digest }}
+      publish-image: true
+
 
 
   github-release:
@@ -36,6 +53,7 @@ jobs:
     needs:
       - release-assets
       - oci-image
+      - oci-publish
     permissions:
       actions: read
       artifact-metadata: write
