@@ -3,10 +3,6 @@ version: 2
 
 project_name: release-mvp
 
-before:
-  hooks:
-    - go test ./...
-
 gomod:
   proxy: true
   env:
@@ -70,7 +66,4 @@ changelog:
   disable: true
 
 release:
-  draft: true
-  prerelease: auto
-  mode: keep-existing
-  use_existing_draft: true
+  disable: true

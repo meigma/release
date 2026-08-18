@@ -111,6 +111,15 @@ jobs:
               ...context.repo,
               artifact_id: artifactId,
             })
+            if (artifact.expired) {
+              throw new Error(`Artifact ${artifactId} has expired.`)
+            }
+            if (artifact.workflow_run?.id !== Number(context.runId)) {
+              throw new Error(
+                `Artifact ${artifactId} belongs to workflow run ` +
+                  `${artifact.workflow_run?.id}, expected ${context.runId}.`,
+              )
+            }
             const normalize = (digest) => String(digest ?? '')
               .replace(/^sha256:/, '')
               .toLowerCase()
@@ -155,9 +164,6 @@ jobs:
             }
             if (!release.draft) {
               throw new Error(`Release ${process.env.TAG} is not a draft.`)
-            }
-            if (release.assets.length !== 0) {
-              throw new Error('Draft release already contains assets; refusing to replace them.')
             }
 
             const tag = await exec.getExecOutput(
@@ -304,14 +310,50 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           ASSETS: ${{ steps.bundle.outputs.assets }}
+          EXPECTED_DIGESTS: ${{ steps.bundle.outputs.digests }}
           RELEASE_APP_TOKEN: ${{ steps.release-app.outputs.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
           REPOSITORY: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         with:
+          retries: 3
           script: |
             const assets = JSON.parse(process.env.ASSETS)
+            const expected = JSON.parse(process.env.EXPECTED_DIGESTS)
+            const releaseId = Number(process.env.RELEASE_ID)
             if (!Array.isArray(assets) || assets.length === 0) {
               throw new Error('No release assets found.')
+            }
+            if (!Number.isSafeInteger(releaseId) || releaseId <= 0) {
+              throw new Error(`Invalid release ID: ${process.env.RELEASE_ID}`)
+            }
+
+            const releaseGitHub = getOctokit(process.env.RELEASE_APP_TOKEN)
+            const releases = await releaseGitHub.paginate(
+              releaseGitHub.rest.repos.listReleases,
+              {...context.repo, per_page: 100},
+            )
+            const matches = releases.filter(
+              ({tag_name: tag}) => tag === process.env.TAG,
+            )
+            if (matches.length !== 1 || matches[0].id !== releaseId) {
+              throw new Error(
+                `Tag ${process.env.TAG} does not uniquely resolve to release ${releaseId}.`,
+              )
+            }
+
+            const expectedNames = new Set(Object.keys(expected))
+            const existing = await releaseGitHub.paginate(
+              releaseGitHub.rest.repos.listReleaseAssets,
+              {...context.repo, release_id: releaseId, per_page: 100},
+            )
+            const unexpected = existing
+              .filter(({name}) => !expectedNames.has(name))
+              .map(({name}) => name)
+            if (unexpected.length !== 0) {
+              throw new Error(
+                `Draft release contains unexpected assets: ${unexpected.join(', ')}.`,
+              )
             }
 
             await exec.exec('mise', [
@@ -324,6 +366,7 @@ jobs:
               ...assets,
               '--repo',
               process.env.REPOSITORY,
+              '--clobber',
             ], {
               cwd: process.env.GITHUB_WORKSPACE,
               env: {...process.env, GH_TOKEN: process.env.RELEASE_APP_TOKEN},
@@ -347,16 +390,32 @@ jobs:
             }
 
             const expected = JSON.parse(process.env.EXPECTED_DIGESTS)
-            const assets = await releaseGitHub.paginate(
-              releaseGitHub.rest.repos.listReleaseAssets,
-              {...context.repo, release_id: releaseId, per_page: 100},
-            )
+            const expectedNames = Object.keys(expected)
+            const sleep = (milliseconds) => new Promise((resolve) => {
+              setTimeout(resolve, milliseconds)
+            })
+            let assets
+            for (let attempt = 1; attempt <= 12; attempt += 1) {
+              assets = await releaseGitHub.paginate(
+                releaseGitHub.rest.repos.listReleaseAssets,
+                {...context.repo, release_id: releaseId, per_page: 100},
+              )
+              const ready = assets.length === expectedNames.length &&
+                assets.every(({digest, state}) => digest && state === 'uploaded')
+              if (ready) break
+
+              core.info(`Release assets not ready; retrying (${attempt}/12).`)
+              await sleep(1000)
+            }
+            if (assets.some(({digest, state}) => !digest || state !== 'uploaded')) {
+              throw new Error('GitHub Release assets did not reach the uploaded state.')
+            }
+
             const actual = new Map(assets.map((asset) => [asset.name, asset.digest]))
             if (actual.size !== assets.length) {
               throw new Error('GitHub Release contains duplicate asset names.')
             }
 
-            const expectedNames = Object.keys(expected)
             if (assets.length !== expectedNames.length) {
               throw new Error(
                 `Release contains ${assets.length} assets; expected ${expectedNames.length}.`,
