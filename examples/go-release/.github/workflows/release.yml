@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: meigma/release/.github/workflows/go-pre-publish.yml@f880a4cefdad74cf65d22688cd64e7238390f52d
+    uses: meigma/release/.github/workflows/go-pre-publish.yml@590457073d615c9063a06f8c34cee6ebbc87a936
 
   oci-image:
     name: Build OCI image
@@ -26,7 +26,7 @@ jobs:
     permissions:
       actions: read
       contents: read
-    uses: meigma/release/.github/workflows/go-oci-build.yml@f880a4cefdad74cf65d22688cd64e7238390f52d
+    uses: meigma/release/.github/workflows/go-oci-build.yml@590457073d615c9063a06f8c34cee6ebbc87a936
     with:
       artifact-id: ${{ needs.release-assets.outputs.oci-input-artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.oci-input-artifact-digest }}
@@ -42,11 +42,11 @@ jobs:
       attestations: write
       contents: read
       id-token: write
-    uses: meigma/release/.github/workflows/publish-github-release.yml@f880a4cefdad74cf65d22688cd64e7238390f52d
+    uses: meigma/release/.github/workflows/publish-github-release.yml@590457073d615c9063a06f8c34cee6ebbc87a936
     with:
       artifact-id: ${{ needs.release-assets.outputs.artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.artifact-digest }}
-      checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@f880a4cefdad74cf65d22688cd64e7238390f52d
+      checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@590457073d615c9063a06f8c34cee6ebbc87a936
       release-app-client-id: ${{ vars.MEIGMA_RELEASE_APP_CLIENT_ID }}
       publish-release: false
     secrets:
