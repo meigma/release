@@ -201,6 +201,20 @@ jobs:
               exit 1
             fi
             test -f "${source_path}"
+            description=$(file -b "${source_path}")
+            case "${goarch}" in
+              amd64) expected_machine='x86-64' ;;
+              arm64) expected_machine='ARM aarch64' ;;
+              *) echo "::error::Unexpected Go architecture: ${goarch}"; exit 1 ;;
+            esac
+            if [[
+              "${description}" != ELF\ 64-bit\ LSB\ executable* ||
+              "${description}" != *"${expected_machine}"* ||
+              "${description}" != *'statically linked'*
+            ]]; then
+              echo "::error::linux/${goarch} canonical input is not a static ${expected_machine} ELF executable: ${description}"
+              exit 1
+            fi
             if [[ -n "${binary_name}" && "${artifact_name}" != "${binary_name}" ]]; then
               echo '::error::Linux architecture binaries have different names.'
               exit 1
@@ -303,16 +317,38 @@ jobs:
         env:
           OUTPUT: ${{ steps.stage.outputs.output }}
           VERSION: ${{ steps.stage.outputs.version }}
+          BINARY_NAME: ${{ steps.stage.outputs.binary-name }}
           WORK: ${{ steps.stage.outputs.work }}
         shell: bash
         run: |
           set -euo pipefail
           cd "${OUTPUT}"
-          jq -e '
-            ((.manifests | length) == 2) and
-            (([.manifests[].platform.architecture] | sort) == ["amd64", "arm64"]) and
-            (all(.manifests[]; .platform.os == "linux"))
-          ' layout/index.json >/dev/null
+          jq -e \
+            --arg description "$(jq -er '.annotations["org.opencontainers.image.description"]' layout/index.json)" \
+            --arg license "$(jq -er '.annotations["org.opencontainers.image.licenses"]' layout/index.json)" \
+            --arg revision "${GITHUB_SHA}" \
+            --arg source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --arg title "$(jq -er '.annotations["org.opencontainers.image.title"]' layout/index.json)" \
+            --arg version "${VERSION}" '
+              (.schemaVersion == 2) and
+              (.mediaType == "application/vnd.oci.image.index.v1+json") and
+              ((.manifests | length) == 2) and
+              (([.manifests[].platform.architecture] | sort) == ["amd64", "arm64"]) and
+              (all(.manifests[]; .platform.os == "linux")) and
+              (.annotations["org.opencontainers.image.description"] == $description) and
+              (.annotations["org.opencontainers.image.licenses"] == $license) and
+              (.annotations["org.opencontainers.image.revision"] == $revision) and
+              (.annotations["org.opencontainers.image.source"] == $source) and
+              (.annotations["org.opencontainers.image.title"] == $title) and
+              (.annotations["org.opencontainers.image.version"] == $version) and
+              (($description | length) > 0) and
+              (($license | length) > 0) and
+              (($title | length) > 0)
+            ' layout/index.json >/dev/null
+
+          description=$(jq -er '.annotations["org.opencontainers.image.description"]' layout/index.json)
+          license=$(jq -er '.annotations["org.opencontainers.image.licenses"]' layout/index.json)
+          title=$(jq -er '.annotations["org.opencontainers.image.title"]' layout/index.json)
 
           while IFS=$'\t' read -r architecture manifest_digest; do
             case "${architecture}" in
@@ -321,27 +357,56 @@ jobs:
               *) echo "::error::Unexpected architecture: ${architecture}"; exit 1 ;;
             esac
             manifest=layout/blobs/sha256/${manifest_digest#sha256:}
-            jq -e '(.layers | length) == 1' "${manifest}" >/dev/null
+            jq -e \
+              --arg description "${description}" \
+              --arg license "${license}" \
+              --arg revision "${GITHUB_SHA}" \
+              --arg source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+              --arg title "${title}" \
+              --arg version "${VERSION}" '
+                (.schemaVersion == 2) and
+                (.mediaType == "application/vnd.oci.image.manifest.v1+json") and
+                ((.layers | length) == 1) and
+                (.annotations["org.opencontainers.image.description"] == $description) and
+                (.annotations["org.opencontainers.image.licenses"] == $license) and
+                (.annotations["org.opencontainers.image.revision"] == $revision) and
+                (.annotations["org.opencontainers.image.source"] == $source) and
+                (.annotations["org.opencontainers.image.title"] == $title) and
+                (.annotations["org.opencontainers.image.version"] == $version)
+              ' "${manifest}" >/dev/null
             config_digest=$(jq -er '.config.digest' "${manifest}")
             layer_digest=$(jq -er '.layers[0].digest' "${manifest}")
             config=layout/blobs/sha256/${config_digest#sha256:}
             layer=layout/blobs/sha256/${layer_digest#sha256:}
-            entrypoint=$(jq -er '
-              .config.Entrypoint
-              | if length == 1 then .[0] else error("expected one entrypoint") end
-            ' "${config}")
+            entrypoint=/usr/bin/${BINARY_NAME}
+            jq -e \
+              --arg architecture "${architecture}" \
+              --arg description "${description}" \
+              --arg entrypoint "${entrypoint}" \
+              --arg license "${license}" \
+              --arg revision "${GITHUB_SHA}" \
+              --arg source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+              --arg title "${title}" \
+              --arg version "${VERSION}" '
+                (.architecture == $architecture) and
+                (.os == "linux") and
+                (.config.Entrypoint == [$entrypoint]) and
+                (.config.User == "65532") and
+                (.config.Labels["org.opencontainers.image.description"] == $description) and
+                (.config.Labels["org.opencontainers.image.licenses"] == $license) and
+                (.config.Labels["org.opencontainers.image.revision"] == $revision) and
+                (.config.Labels["org.opencontainers.image.source"] == $source) and
+                (.config.Labels["org.opencontainers.image.title"] == $title) and
+                (.config.Labels["org.opencontainers.image.version"] == $version)
+              ' "${config}" >/dev/null
             entry=${entrypoint#/}
 
-            owner=$(
-              tar --numeric-owner -tvf "${layer}" "${entry}" |
-                awk '{
-                  if ($2 ~ /^[0-9]+\/[0-9]+$/) {
-                    print $2
-                  } else {
-                    print $3 "/" $4
-                  }
-                }'
-            )
+            listing=$(tar --numeric-owner -tvf "${layer}" "${entry}")
+            read -r mode owner _ <<< "${listing}"
+            if [[ "${mode}" != '-rwxr-xr-x' ]]; then
+              echo "::error::${entrypoint} has mode ${mode}; expected -rwxr-xr-x (0755)."
+              exit 1
+            fi
             if [[ "${owner}" != '0/0' ]]; then
               echo "::error::${entrypoint} is owned by ${owner}; expected 0/0."
               exit 1

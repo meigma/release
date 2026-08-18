@@ -24,6 +24,16 @@ on:
         required: false
         default: true
         type: boolean
+      require-oci-image:
+        description: Require a published digest-pinned OCI image before making the GitHub Release public.
+        required: false
+        default: false
+        type: boolean
+      oci-image-reference:
+        description: Published digest-pinned OCI image reference; required for publication when require-oci-image is true.
+        required: false
+        default: ''
+        type: string
     secrets:
       release-app-private-key:
         description: Private key of the GitHub App that publishes releases.
@@ -57,10 +67,32 @@ jobs:
     steps:
       - name: Require a tag ref
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          OCI_IMAGE_REFERENCE: ${{ inputs.oci-image-reference }}
+          PUBLISH_RELEASE: ${{ inputs.publish-release }}
+          REQUIRE_OCI_IMAGE: ${{ inputs.require-oci-image }}
         with:
           script: |
             if (process.env.GITHUB_REF_TYPE !== 'tag') {
               throw new Error('GitHub Release publication must run against a tag ref.')
+            }
+            if (
+              process.env.PUBLISH_RELEASE === 'true' &&
+              process.env.REQUIRE_OCI_IMAGE === 'true'
+            ) {
+              const expectedName =
+                `ghcr.io/${context.repo.owner.toLowerCase()}/${context.repo.repo.toLowerCase()}`
+              const [name, digest, ...extra] =
+                String(process.env.OCI_IMAGE_REFERENCE ?? '').split('@')
+              if (
+                name !== expectedName ||
+                !/^sha256:[0-9a-f]{64}$/.test(digest) ||
+                extra.length !== 0
+              ) {
+                throw new Error(
+                  `GitHub Release publication requires a published OCI image at ${expectedName}@sha256:<digest>.`,
+                )
+              }
             }
 
       - name: Checkout

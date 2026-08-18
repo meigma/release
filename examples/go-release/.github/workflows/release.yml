@@ -65,6 +65,8 @@ jobs:
       artifact-id: ${{ needs.release-assets.outputs.artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.artifact-digest }}
       checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
+      require-oci-image: true
+      oci-image-reference: ${{ needs.oci-publish.outputs.image-reference }}
       release-app-client-id: ${{ vars.MEIGMA_RELEASE_APP_CLIENT_ID }}
       publish-release: false
     secrets:
