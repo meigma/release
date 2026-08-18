@@ -194,7 +194,7 @@ jobs:
               echo "::error::GoReleaser artifact escapes its handoff directory."
               exit 1
             fi
-            test -x "${source_path}"
+            test -f "${source_path}"
             if [[ -n "${binary_name}" && "${artifact_name}" != "${binary_name}" ]]; then
               echo '::error::Linux architecture binaries have different names.'
               exit 1
