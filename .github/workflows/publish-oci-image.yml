@@ -212,11 +212,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          oras cp \
-            --from-oci-layout \
-            --no-tty \
-            "oci-image/layout@${EXPECTED_DIGEST}" \
-            "${IMAGE_NAME}:${IMAGE_TAGS}"
+
+          while IFS=$'\t' read -r manifest_digest media_type; do
+            manifest_path="oci-image/layout/blobs/sha256/${manifest_digest#sha256:}"
+
+            while IFS= read -r blob_digest; do
+              oras blob push \
+                --no-tty \
+                "${IMAGE_NAME}@${blob_digest}" \
+                "oci-image/layout/blobs/sha256/${blob_digest#sha256:}"
+            done < <(jq -r '.config.digest, .layers[].digest' "${manifest_path}")
+
+            oras manifest push \
+              --media-type "${media_type}" \
+              "${IMAGE_NAME}@${manifest_digest}" \
+              "${manifest_path}"
+          done < <(jq -r '.manifests[] | [.digest, .mediaType] | @tsv' oci-image/layout/index.json)
+
+          oras manifest push \
+            --media-type application/vnd.oci.image.index.v1+json \
+            "${IMAGE_NAME}:${IMAGE_TAGS}" \
+            oci-image/layout/index.json
 
           IFS=, read -ra tags <<< "${IMAGE_TAGS}"
           for tag in "${tags[@]}"; do
