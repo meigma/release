@@ -246,7 +246,7 @@ gh run view "$FAILED_RUN_ID" \
 
 Keep the release as a draft while diagnosing any failure below.
 
-If recovery changes source, workflow configuration, or tool pins, merge that correction, record its commit SHA, and trigger a new run by authorized movement of the unpublished tag to that commit. Then select the run by the exact tag and SHA as shown above. If the tag cannot be moved safely, abandon the incomplete candidate and cut a new one. Use a plain Actions rerun only when no repository content changes, such as recovery from artifact expiry or a transient service failure.
+If recovery changes source, workflow configuration, or tool pins, merge that correction, record its commit SHA, and trigger a new run by authorized movement of the unpublished tag to that commit. Then select the run by the exact tag and SHA as shown above. If the tag cannot be moved safely, abandon the incomplete candidate and cut a new one. When repository content is unchanged and upstream build jobs succeeded, rerun only failed jobs with `gh run rerun "$FAILED_RUN_ID" --repo "$REPOSITORY" --failed`; this preserves the authoritative artifacts from the original workflow run. Use a complete rerun only when an upstream artifact must be rebuilt, such as artifact expiry or an artifact-handoff failure.
 
 ### The matching draft is missing
 
@@ -280,14 +280,14 @@ A draft can be recovered after an authorized tag move because the workflow reval
 
 The publisher rejects an invalid artifact ID, an expired artifact, a digest mismatch, or an artifact produced by another workflow run.
 
-If the repository does not need a correction, rerun the complete top-level workflow with `gh run rerun "$FAILED_RUN_ID" --repo "$REPOSITORY"`; do not rerun only the publisher job or substitute an artifact from another run. The producer and publisher must exchange the artifact ID and digest within that run. If the handoff failure requires a source, workflow, or pin correction, merge the correction and move the unpublished tag to that commit to create a new tag-triggered run. The authoritative artifact is retained for seven days; an expired artifact can be replaced by a plain complete rerun when repository content is unchanged.
+If the repository does not need a correction, rerun the complete top-level workflow with `gh run rerun "$FAILED_RUN_ID" --repo "$REPOSITORY"` so it builds a new authoritative artifact; do not substitute an artifact from another run. The producer and publisher must exchange the artifact ID and digest within one run. If the handoff failure requires a source, workflow, or pin correction, merge the correction and move the unpublished tag to that commit to create a new tag-triggered run. The authoritative artifact is retained for seven days; an expired artifact also requires a complete rerun.
 
 ### Checksum or Cosign verification fails
 
 For the documented current revision, the publisher requires a nonempty `checksums.txt`, the exact closed payload list, matching payload hashes, a regular Cosign bundle file, issuer `https://token.actions.githubusercontent.com`, and this certificate identity:
 
 ```text
-https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
+https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843
 ```
 
 For an upgrade rehearsal, replace the current-revision identity with the target value described in [Upgrade GitHub Release workflows](upgrade-github-release-workflows.md).
@@ -309,7 +309,7 @@ Do not use `--clobber` for an unexpected name. The workflow uses `--clobber` onl
 
 The publisher waits until every expected asset is uploaded and GitHub reports its digest. It then requires the exact asset count, unique names, and a GitHub-reported SHA-256 digest matching the locally validated bundle.
 
-If no repository content changes, rerun the complete workflow with `gh run rerun "$FAILED_RUN_ID" --repo "$REPOSITORY"`. The validated expected names may be replaced in the same draft. If the failure requires a source, workflow, or pin correction, merge the correction and move the unpublished tag to that commit; otherwise abandon the candidate and cut a new one. If the failure repeats, leave the release as a draft and inspect the release asset state and workflow logs; do not publish through the UI. Manual removal is required only when an unexpected or otherwise unreconcilable asset prevents the workflow from restoring the closed name set.
+If no repository content changes and the producer succeeded, rerun only failed jobs with `gh run rerun "$FAILED_RUN_ID" --repo "$REPOSITORY" --failed`. This reuses the validated artifact and may replace its expected names in the same draft. If the failure requires a source, workflow, or pin correction, merge the correction and move the unpublished tag to that commit; otherwise abandon the candidate and cut a new one. If the failure repeats, leave the release as a draft and inspect the release asset state and workflow logs; do not publish through the UI. Manual removal is required only when an unexpected or otherwise unreconcilable asset prevents the workflow from restoring the closed name set.
 
 If the final API call changed the release to non-draft before a later check failed, the workflow cannot roll that state back. Confirm the state with `gh release view "$TAG" --repo "$REPOSITORY" --json isDraft,publishedAt,url`. A subsequent run will reject the public release because it is no longer a draft; preserve it and cut a corrected version unless the organization authorizes a release-incident removal.
 
@@ -322,6 +322,6 @@ Manual cleanup is required when:
 - repository rules require an authorized administrator to approve the controlled rehearsal tag move; or
 - a draft contains a release association or asset state that the validated `--clobber` path cannot reconcile.
 
-Manual cleanup is not required for an expired authoritative artifact, an expected asset from the first draft-only run, or a failed checksum/signature check. Use a complete rerun when repository content is unchanged. For a source, configuration, or pin correction, merge the correction and trigger a new tag run or abandon the candidate.
+Manual cleanup is not required for an expected asset from the first draft-only run or a failed checksum/signature check. Rerun only failed jobs when upstream artifacts remain valid and repository content is unchanged. Use a complete rerun for an expired or invalid artifact. For a source, configuration, or pin correction, merge the correction and trigger a new tag run or abandon the candidate.
 
 If a release is already public, do not delete it or move its tag as routine recovery. Preserve the published record and release a corrected version unless the organization declares a separate release incident and explicitly authorizes removal.

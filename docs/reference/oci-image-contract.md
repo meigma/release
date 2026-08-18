@@ -1,6 +1,6 @@
 # OCI image contract
 
-This page defines the cross-repository contract for the reusable Go OCI builder and GHCR publisher at revision `72945990eda349f83c0f7628e85521fb30071fc6`.
+This page defines the cross-repository contract for the reusable Go OCI builder and GHCR publisher at revision `052e8277da00bf6369093ed8736cf5d21195d843`.
 
 For adoption steps, see [Configure OCI image publication](../how-to/configure-oci-images.md). The [GitHub Release contract](github-release-contract.md) defines the upstream GoReleaser producer and GitHub Release publisher. A complete consumer is available in the [Go release example](../../examples/go-release/).
 
@@ -14,7 +14,7 @@ GoReleaser producer
   -> locked apko multi-architecture OCI layout
   -> verified oci-image artifact
   -> ORAS GHCR publication
-  -> recursive keyless Cosign signatures
+  -> keyless Cosign signatures for the index and both platform manifests
   -> GitHub and registry provenance/SBOM attestations
   -> public GitHub Release
 ```
@@ -26,11 +26,11 @@ The image builder consumes prebuilt GoReleaser binaries. Melange packages them w
 Consumers call both workflows at the same immutable revision:
 
 ```yaml
-uses: meigma/release/.github/workflows/go-oci-build.yml@72945990eda349f83c0f7628e85521fb30071fc6
+uses: meigma/release/.github/workflows/go-oci-build.yml@052e8277da00bf6369093ed8736cf5d21195d843
 ```
 
 ```yaml
-uses: meigma/release/.github/workflows/publish-oci-image.yml@72945990eda349f83c0f7628e85521fb30071fc6
+uses: meigma/release/.github/workflows/publish-oci-image.yml@052e8277da00bf6369093ed8736cf5d21195d843
 ```
 
 Moving branches and tags are not supported workflow references.
@@ -136,7 +136,7 @@ The current example includes Alpine's CA certificate bundle. A command that does
 The builder uploads `oci-image` with seven-day retention and no additional ZIP compression. Its contract includes:
 
 ```text
-apko-lock.json
+apko.lock.json
 apk-signing.rsa.pub
 configuration/apko.yaml
 configuration/melange.yaml
@@ -178,12 +178,12 @@ A stable release tag `vMAJOR.MINOR.PATCH` publishes:
 
 | Image tag | Behavior |
 | --- | --- |
-| `MAJOR.MINOR.PATCH` | Exact release version. Must never be reassigned to different content. |
-| `MAJOR.MINOR` | Moves to the latest stable patch in that minor line. |
-| `MAJOR` | Moves to the latest stable release in that major line. |
-| `latest` | Moves to the latest stable release. |
+| `MAJOR.MINOR.PATCH` | Immutable exact release version. Publication fails before any registry upload when this tag already resolves to a different digest. |
+| `MAJOR.MINOR` | Advances only when the candidate is a greater stable version in the same minor line. |
+| `MAJOR` | Advances only when the candidate is a greater stable version in the same major line. |
+| `latest` | Advances only when the candidate is greater than its current stable version. |
 
-All four tags must resolve to the builder's expected OCI index digest immediately after publication. The publisher rejects prerelease, build-metadata, malformed, branch, and untagged refs.
+The exact tag must resolve to the builder's expected OCI index digest after publication. Each eligible channel tag must resolve to that digest; an out-of-order or backport release leaves newer channel tags unchanged. The publisher resolves and validates every existing tag before uploading the image. A repository-wide publisher concurrency group prevents different release tags from planning and updating channels concurrently. Prerelease, build-metadata, malformed, branch, and untagged refs are rejected.
 
 Digest-pinned references are the durable consumer interface:
 
@@ -199,7 +199,7 @@ For both platforms, the builder verifies:
 - one apko index containing exactly two platform manifests;
 - package and image executable bytes equal the canonical GoReleaser binary;
 - executable ownership `0:0` inside the image layer;
-- executable mode `0755` from package configuration;
+- executable mode `0755` inside the image layer;
 - configured entrypoint;
 - runtime user `65532`;
 - source, version, revision, title, description, and license annotations; and
@@ -207,11 +207,11 @@ For both platforms, the builder verifies:
 
 ## Signatures and attestations
 
-The publisher signs the index and both platform manifests recursively with Cosign keyless signing. Verification must require:
+The publisher signs the index and both platform manifests with Cosign keyless signing. Verification must require:
 
 | Field | Value |
 | --- | --- |
-| Certificate identity | `https://github.com/meigma/release/.github/workflows/publish-oci-image.yml@72945990eda349f83c0f7628e85521fb30071fc6` |
+| Certificate identity | `https://github.com/meigma/release/.github/workflows/publish-oci-image.yml@052e8277da00bf6369093ed8736cf5d21195d843` |
 | Certificate OIDC issuer | `https://token.actions.githubusercontent.com` |
 | Subject | Digest-pinned image or platform manifest. |
 
@@ -229,14 +229,15 @@ Cosign signatures and GitHub attestations are distinct. A passing check for one 
 
 | State | Registry effect | Expected next action |
 | --- | --- | --- |
-| `publish-image: false` | None. Artifact and index verification only. | Inspect the rehearsal and enable publication in a reviewed commit. |
-| Push incomplete | Some blobs or tags may exist. GitHub Release remains draft. | Fix the cause and rerun the same unpublished tag. |
-| Push complete, signing incomplete | Tags resolve correctly but trust metadata is incomplete. GitHub Release remains draft. | Rerun; do not advertise or make the package public. |
-| Signed, attestation incomplete | Image is signed but does not satisfy the complete contract. GitHub Release remains draft. | Rerun and verify every attestation. |
-| Complete, package private | Authenticated pulls work. | Inspect, then perform the one-time public visibility change. |
+| `publish-image: false` | None. Artifact and index verification only. | Inspect the rehearsal and enable both publication controls in one reviewed commit. |
+| Digest upload incomplete | Untagged blobs or manifests may exist. No release tag has been created or changed. GitHub Release remains draft. | Rerun only failed jobs so the publisher reuses the authoritative artifact from the same workflow run. |
+| Signing incomplete | The digest-addressed image may exist, but no release tag has been created or changed. GitHub Release remains draft. | Rerun only failed jobs; do not advertise or make the package public. |
+| Attestation incomplete | The digest is signed but does not satisfy the complete contract. No release tag has been created or changed. GitHub Release remains draft. | Rerun only failed jobs and verify every attestation. |
+| Tag publication incomplete | The digest has complete trust metadata, but a registry failure may have applied only part of the planned tag set. GitHub Release remains draft. | Rerun only failed jobs; the publisher revalidates the immutable exact tag and converges eligible channels on the expected digest. |
+| Complete, package private | Authenticated pulls work and planned tags resolve correctly. | Inspect, then perform the one-time public visibility change. |
 | Complete, package public | Anonymous digest and tag pulls work. | Monitor and publish only additive corrective releases. |
 
-A rerun is content-addressed and rechecks every published tag. It may add duplicate valid signatures or attestations after a partial success. It must not publish the GitHub Release until the image publisher job succeeds.
+The publisher plans tags before its first upload, publishes the OCI layout by digest, signs and attests that digest and both platform manifests, and applies public tags last. A failed-job rerun reuses the same authoritative artifact and may add duplicate valid signatures or attestations after a partial success. The GitHub Release publisher requires the successful digest-pinned OCI output and cannot make the release public until the image publisher job succeeds.
 
 ## GHCR visibility
 

@@ -2,7 +2,7 @@
 
 Use this guide to add signed, multi-architecture GHCR images to a repository that already uses the Meigma Go release workflows. The [OCI image contract](../reference/oci-image-contract.md) defines the reusable workflow interfaces, image contents, tags, signatures, attestations, and recovery behavior.
 
-The documented workflow revision is `72945990eda349f83c0f7628e85521fb30071fc6`.
+The documented workflow revision is `052e8277da00bf6369093ed8736cf5d21195d843`.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Record the consumer repository and immutable workflow revision:
 
 ```bash
 export REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
-export RELEASE_REVISION=72945990eda349f83c0f7628e85521fb30071fc6
+export RELEASE_REVISION=052e8277da00bf6369093ed8736cf5d21195d843
 export IMAGE="ghcr.io/${REPOSITORY,,}"
 ```
 
@@ -99,7 +99,7 @@ permissions:
 Pin every reusable workflow to the same full revision:
 
 ```text
-72945990eda349f83c0f7628e85521fb30071fc6
+052e8277da00bf6369093ed8736cf5d21195d843
 ```
 
 Make `github-release` depend on `oci-publish`. That ordering keeps the GitHub Release in draft state when registry publication, signing, or attestation fails.
@@ -118,7 +118,7 @@ The run still builds the APK repository and OCI index, verifies the canonical bi
 Inspect the `oci-image` workflow artifact. It must contain:
 
 ```text
-apko-lock.json
+apko.lock.json
 apk-signing.rsa.pub
 configuration/apko.yaml
 configuration/melange.yaml
@@ -145,16 +145,15 @@ publish-release: true
 
 Create the next stable `vMAJOR.MINOR.PATCH` release through Release Please. The image publisher rejects non-stable tags.
 
-A successful `v1.2.3` run publishes these tags, all resolving to the same index digest:
+A successful `v1.2.3` run always publishes the immutable exact tag:
 
 ```text
 1.2.3
-1.2
-1
-latest
 ```
 
-The exact version tag is immutable by release policy. The other three tags move on later stable releases. Consumers that require repeatable deployment must use `ghcr.io/owner/repository@sha256:...`, not a moving tag.
+It also advances `1.2`, `1`, and `latest` when `1.2.3` is newer than each channel's current stable version. An out-of-order or backport release publishes its exact tag and advances only the channels for which it is newer; it never moves a channel backward.
+
+The publisher enforces exact-tag immutability before uploading registry content. If `1.2.3` already resolves to a different digest, publication fails without writing the candidate image. Consumers that require repeatable deployment must use `ghcr.io/owner/repository@sha256:...`, not a moving tag.
 
 Package visibility follows the organization's package-creation setting; it does not inherit repository visibility. After the first complete publication, inspect the package:
 
@@ -204,7 +203,7 @@ gh attestation verify "oci://$IMAGE@$DIGEST" \
   --deny-self-hosted-runners
 ```
 
-Verify each platform SBOM attestation:
+Verify each platform signature and SBOM attestation:
 
 ```bash
 for ARCH in amd64 arm64; do
@@ -213,6 +212,10 @@ for ARCH in amd64 arm64; do
       jq -r --arg arch "$ARCH" \
         '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest'
   )"
+  cosign verify \
+    --certificate-identity "https://github.com/meigma/release/.github/workflows/publish-oci-image.yml@$RELEASE_REVISION" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    "$IMAGE@$PLATFORM_DIGEST"
   gh attestation verify "oci://$IMAGE@$PLATFORM_DIGEST" \
     --repo "$REPOSITORY" \
     --bundle-from-oci \
@@ -235,8 +238,14 @@ Both commands must report the release version and commit. Running a non-native p
 
 ## Recovery
 
-A failed publisher leaves the GitHub Release draft unpublished because `github-release` depends on `oci-publish`.
+A failed publisher leaves the GitHub Release draft unpublished because `github-release` depends on `oci-publish` and requires its digest-pinned image output.
 
-Fix the source problem and rerun through the same unpublished tag procedure. Re-publishing the same OCI index is content-addressed: ORAS resolves every tag back to the expected digest before signing or attesting. A rerun after a partial success can add duplicate valid signatures or attestations; it cannot change the exact version's intended image without also changing the expected digest.
+When repository content is unchanged, rerun only the failed jobs:
 
-Never move a tag after its GitHub Release is public. Never delete and recreate a public exact-version image tag to substitute different content. Publish a corrective release instead.
+```bash
+gh run rerun "$FAILED_RUN_ID" --repo "$REPOSITORY" --failed
+```
+
+This preserves the successful builder job and reuses its authoritative OCI artifact. The publisher revalidates the artifact, digest, immutable exact tag, and eligible channel tags. A retry after a partial success may add duplicate valid signatures or attestations. Public tags are assigned only after the expected digest and both platform manifests are signed and attested.
+
+If source, workflow configuration, or tool pins must change, follow the unpublished-tag recovery procedure in [Rehearse and recover GitHub Releases](rehearse-and-recover-github-releases.md). Never move a tag after its GitHub Release is public. Never delete and recreate a public exact-version image tag to substitute different content. Publish a corrective release instead.

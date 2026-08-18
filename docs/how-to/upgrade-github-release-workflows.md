@@ -1,6 +1,6 @@
 # Upgrade GitHub Release workflows
 
-Use this guide to move a consumer repository from the current workflow revision, `72945990eda349f83c0f7628e85521fb30071fc6`, to a reviewed immutable revision. Do not use a branch or tag as a reusable workflow reference. The [GitHub Release contract](../reference/github-release-contract.md) and [OCI image contract](../reference/oci-image-contract.md) define the current interfaces and publication boundaries.
+Use this guide to move a consumer repository from the current workflow revision, `052e8277da00bf6369093ed8736cf5d21195d843`, to a reviewed immutable revision. Do not use a branch or tag as a reusable workflow reference. The [GitHub Release contract](../reference/github-release-contract.md) and [OCI image contract](../reference/oci-image-contract.md) define the current interfaces and publication boundaries.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ Record the consumer, the current baseline, and a local checkout of `meigma/relea
 
 ```bash
 export REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
-export CURRENT_RELEASE_REVISION=72945990eda349f83c0f7628e85521fb30071fc6
+export CURRENT_RELEASE_REVISION=052e8277da00bf6369093ed8736cf5d21195d843
 read -r -p 'Reviewed full meigma/release commit SHA: ' NEW_RELEASE_REVISION
 export NEW_RELEASE_REVISION
 read -r -p 'Path to the meigma/release checkout: ' RELEASE_CHECKOUT

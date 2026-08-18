@@ -100,8 +100,8 @@ In the copied files, replace the example values with values from the consumer re
 
 Do not replace these shared contract values:
 
-- reusable workflow revision `72945990eda349f83c0f7628e85521fb30071fc6`;
-- `checksum-signing-workflow-ref` value `meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6`;
+- reusable workflow revision `052e8277da00bf6369093ed8736cf5d21195d843`;
+- `checksum-signing-workflow-ref` value `meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843`;
 - variable name `MEIGMA_RELEASE_APP_CLIENT_ID`; or
 - secret name `MEIGMA_RELEASE_APP_PRIVATE_KEY`.
 
@@ -227,7 +227,7 @@ Verify that the checksum manifest was signed by the canonical reusable pre-publi
 ```bash
 mise exec -- cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity 'https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6' \
+  --certificate-identity 'https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   checksums.txt
 ```
@@ -243,7 +243,7 @@ while IFS= read -r entry; do
   mise exec -- gh attestation verify "$asset" \
     --repo "$REPOSITORY" \
     --signer-workflow meigma/release/.github/workflows/publish-github-release.yml \
-    --signer-digest 72945990eda349f83c0f7628e85521fb30071fc6 \
+    --signer-digest 052e8277da00bf6369093ed8736cf5d21195d843 \
     --source-ref "refs/tags/$TAG" \
     --deny-self-hosted-runners
 done < checksums.txt

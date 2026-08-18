@@ -1,6 +1,6 @@
 # GitHub release contract reference
 
-This page defines the cross-repository contract for the reusable Go producer and GitHub Release publisher at revision `72945990eda349f83c0f7628e85521fb30071fc6`.
+This page defines the cross-repository contract for the reusable Go producer and GitHub Release publisher at revision `052e8277da00bf6369093ed8736cf5d21195d843`.
 
 For configuration steps, see [Configure GitHub releases](../how-to/configure-github-releases.md). For draft rehearsals and recovery steps, see [Rehearse and recover GitHub releases](../how-to/rehearse-and-recover-github-releases.md). The [OCI image contract](oci-image-contract.md) defines the image builder and publisher that gate the complete delivery caller. To adopt another immutable revision, see [Upgrade GitHub release workflows](../how-to/upgrade-github-release-workflows.md). A complete consumer repository is available in the [Go release example](../../examples/go-release/).
 
@@ -9,17 +9,17 @@ For configuration steps, see [Configure GitHub releases](../how-to/configure-git
 The complete caller pins all four reusable workflows to one full revision. The GitHub Release path directly calls the producer and GitHub publisher:
 
 ```yaml
-uses: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
+uses: meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843
 ```
 
 ```yaml
-uses: meigma/release/.github/workflows/publish-github-release.yml@72945990eda349f83c0f7628e85521fb30071fc6
+uses: meigma/release/.github/workflows/publish-github-release.yml@052e8277da00bf6369093ed8736cf5d21195d843
 ```
 
 The checksum signer identity input must name the same producer workflow revision:
 
 ```yaml
-checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
+checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843
 ```
 
 ## Caller contract
@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
+    uses: meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843
 
   oci-image:
     name: Build OCI image
@@ -55,7 +55,7 @@ jobs:
     permissions:
       actions: read
       contents: read
-    uses: meigma/release/.github/workflows/go-oci-build.yml@72945990eda349f83c0f7628e85521fb30071fc6
+    uses: meigma/release/.github/workflows/go-oci-build.yml@052e8277da00bf6369093ed8736cf5d21195d843
     with:
       artifact-id: ${{ needs.release-assets.outputs.oci-input-artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.oci-input-artifact-digest }}
@@ -70,7 +70,7 @@ jobs:
       contents: read
       id-token: write
       packages: write
-    uses: meigma/release/.github/workflows/publish-oci-image.yml@72945990eda349f83c0f7628e85521fb30071fc6
+    uses: meigma/release/.github/workflows/publish-oci-image.yml@052e8277da00bf6369093ed8736cf5d21195d843
     with:
       artifact-id: ${{ needs.oci-image.outputs.artifact-id }}
       artifact-digest: ${{ needs.oci-image.outputs.artifact-digest }}
@@ -89,11 +89,13 @@ jobs:
       attestations: write
       contents: read
       id-token: write
-    uses: meigma/release/.github/workflows/publish-github-release.yml@72945990eda349f83c0f7628e85521fb30071fc6
+    uses: meigma/release/.github/workflows/publish-github-release.yml@052e8277da00bf6369093ed8736cf5d21195d843
     with:
       artifact-id: ${{ needs.release-assets.outputs.artifact-id }}
       artifact-digest: ${{ needs.release-assets.outputs.artifact-digest }}
-      checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6
+      checksum-signing-workflow-ref: meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843
+      require-oci-image: true
+      oci-image-reference: ${{ needs.oci-publish.outputs.image-reference }}
       release-app-client-id: ${{ vars.MEIGMA_RELEASE_APP_CLIENT_ID }}
       publish-release: true
     secrets:
@@ -102,7 +104,7 @@ jobs:
 
 The top-level `permissions: {}` prevents permissions from being granted implicitly. Each called job grants its reusable workflow only the permissions listed above. A called workflow cannot elevate permissions beyond those granted by its caller.
 
-The concurrency key serializes runs for the same workflow and tag. `cancel-in-progress: false` prevents a later release run from canceling an earlier run.
+The caller concurrency key serializes runs for the same workflow and tag. `cancel-in-progress: false` prevents a later run for that tag from canceling an earlier run. The OCI publisher adds repository-wide serialization across different release tags so shared channel tags cannot race.
 
 ## Reusable workflow interfaces
 
@@ -134,6 +136,8 @@ The workflow runs on `ubuntu-24.04` with a 20-minute timeout. It declares `permi
 | `checksum-signing-workflow-ref` | string | Yes | None | Exact owner, repository, workflow path, and revision used as the checksum certificate identity after the `https://github.com/` prefix is added. |
 | `release-app-client-id` | string | Yes | None | Client ID used to mint the Release App installation token. |
 | `publish-release` | boolean | No | `true` | Whether to change the populated draft to a non-draft release after verification. |
+| `require-oci-image` | boolean | No | `false` | Whether public GitHub Release publication requires a validated digest-pinned GHCR image reference for the caller repository. |
+| `oci-image-reference` | string | No | Empty | `ghcr.io/<lowercase-owner>/<lowercase-repository>@sha256:<digest>` returned by the successful OCI publisher. |
 
 | Secret | Required | Value |
 | --- | --- | --- |
@@ -292,14 +296,14 @@ The checksum signature is accepted only when Cosign verifies all of the followin
 
 | Field | Required value |
 | --- | --- |
-| Certificate identity | `https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@72945990eda349f83c0f7628e85521fb30071fc6` |
+| Certificate identity | `https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@052e8277da00bf6369093ed8736cf5d21195d843` |
 | Certificate OIDC issuer | `https://token.actions.githubusercontent.com` |
 | Signed blob | `checksums.txt` |
 | Bundle | `checksums.txt.sigstore.json` |
 
 The exact identity comes from `checksum-signing-workflow-ref`; a branch name, tag name, different commit, or different workflow path does not satisfy the documented identity.
 
-The publisher at `meigma/release/.github/workflows/publish-github-release.yml@72945990eda349f83c0f7628e85521fb30071fc6` creates GitHub build-provenance attestations in the consumer repository. Its job token creates attestations but has only `contents: read`. A short-lived Release App installation token with `contents: write` performs draft discovery, asset upload, and the final draft-state change.
+The publisher at `meigma/release/.github/workflows/publish-github-release.yml@052e8277da00bf6369093ed8736cf5d21195d843` creates GitHub build-provenance attestations in the consumer repository. Its job token creates attestations but has only `contents: read`. A short-lived Release App installation token with `contents: write` performs draft discovery, asset upload, and the final draft-state change.
 
 ## Publication states
 
@@ -310,9 +314,9 @@ The publisher at `meigma/release/.github/workflows/publish-github-release.yml@72
 | Artifact built | The producer runs on the tag. | GoReleaser builds once in that run, creates SBOMs and checksums, signs the checksum manifest, and uploads `release-assets`. | The artifact ID and digest pass to the publisher in the same workflow run. |
 | Draft populated | The publisher validates the artifact, signature, tag, and draft. | It attests the checksummed payloads, uploads the closed asset set, and verifies every GitHub-reported asset digest. | Asset names, states, and digests match the signed bundle. |
 | Rehearsal complete | `publish-release` is `false`. | The publisher verifies that the release remains a draft. | The populated draft is available for inspection or a later recovery run. |
-| Published | `publish-release` is `true` and asset verification succeeds. | The publisher sets `draft: false` and verifies the resulting state. | The same release URL identifies a non-draft GitHub Release. |
+| Published | `publish-release` is `true`, asset verification succeeds, and any required digest-pinned OCI image reference is valid. | The publisher sets `draft: false` and verifies the resulting state. | The same release URL identifies a non-draft GitHub Release. |
 
-The publisher does not create a release, generate release notes, change a tag, or upload an asset before validating the signed bundle. It does not set `draft: false` until the uploaded asset name and digest sets match the bundle.
+The publisher does not create a release, generate release notes, change a tag, or upload an asset before validating the signed bundle. It does not set `draft: false` until the uploaded asset name and digest sets match the bundle. When `require-oci-image` is `true`, it also requires the successful OCI publisher's exact `ghcr.io/<owner>/<repository>@sha256:<digest>` output before any release mutation.
 
 ## Retry and recovery behavior
 
