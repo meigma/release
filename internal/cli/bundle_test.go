@@ -41,6 +41,8 @@ const (
 	bundleSecondData = "arm64-archive"
 	// bundleSigstore is the detached bundle fixture contents.
 	bundleSigstore = "{bundle}"
+	// bundleCosignPath is the RELEASE_COSIGN_PATH fixture.
+	bundleCosignPath = "/opt/cosign"
 )
 
 func TestVerifyBundleMissingDistIsUsage(t *testing.T) {
@@ -200,7 +202,7 @@ func TestVerifyBundleFlagOverridesEnv(t *testing.T) {
 		"--identity", bundleIdentity,
 		"--issuer", bundleAltIssuer,
 		"--json",
-	}, func(dir string) (pubgh.BlobVerifier, error) {
+	}, func(_, dir string) (pubgh.BlobVerifier, error) {
 		gotDir = dir
 		return capturingVerifier(t, &got), nil
 	})
@@ -239,6 +241,58 @@ func TestVerifyBundleClosedSetFailureNeverCallsVerifier(t *testing.T) {
 	assert.Equal(t, 1, cli.ExitCode(err))
 	assert.Contains(t, err.Error(), "extra.bin")
 	assertBundleFailureEnvelope(t, stdout, "extra.bin")
+	assert.NotContains(t, stdout, bundleToken)
+}
+
+func TestVerifyBundlePayloadSymlinkNeverCallsVerifier(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeClosedBundle(t)
+	require.NoError(t, os.WriteFile(filepath.Join(fixture.dir, bundleSecondName), []byte(bundleFirstData), 0o644))
+	checksums := fixture.firstDigest + "  " + bundleFirstName + "\n" + fixture.firstDigest + "  " + bundleSecondName + "\n"
+	writeFile(t, filepath.Join(fixture.dir, "checksums.txt"), checksums)
+	link := filepath.Join(fixture.dir, bundleFirstName)
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink(bundleSecondName, link))
+
+	stdout, _, err := executeBundle(t, map[string]string{
+		"GITHUB_TOKEN": bundleToken,
+	}, []string{
+		"verify", "bundle",
+		"--dist", fixture.dir,
+		"--identity", bundleIdentity,
+		"--json",
+	}, unusedVerifier(t))
+	require.Error(t, err)
+	assert.Equal(t, 1, cli.ExitCode(err))
+	assert.Contains(t, err.Error(), bundleFirstName)
+	assertBundleFailureEnvelope(t, stdout, bundleFirstName)
+	assert.NotContains(t, stdout, bundleToken)
+}
+
+func TestVerifyBundleCosignPathReachesFactory(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeClosedBundle(t)
+	var gotPath string
+	var gotDir string
+	stdout, err := executeBundleFactory(t, map[string]string{
+		"RELEASE_COSIGN_PATH": bundleCosignPath,
+		"GITHUB_TOKEN":        bundleToken,
+	}, []string{
+		"verify", "bundle",
+		"--dist", fixture.dir,
+		"--identity", bundleIdentity,
+		"--json",
+	}, func(path, dir string) (pubgh.BlobVerifier, error) {
+		gotPath = path
+		gotDir = dir
+		return acceptingVerifier(t), nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, bundleCosignPath, gotPath)
+	assert.Equal(t, fixture.dir, gotDir)
+	assert.Equal(t, 1, countJSONDocuments(stdout))
 	assert.NotContains(t, stdout, bundleToken)
 }
 
@@ -369,10 +423,10 @@ func failingVerifier(t *testing.T) *cosignmocks.MockBlobVerifier {
 }
 
 // trackingBundleFactory records whether the verifier factory was invoked.
-func trackingBundleFactory(t *testing.T, called *bool) func(string) (pubgh.BlobVerifier, error) {
+func trackingBundleFactory(t *testing.T, called *bool) func(string, string) (pubgh.BlobVerifier, error) {
 	t.Helper()
 
-	return func(string) (pubgh.BlobVerifier, error) {
+	return func(string, string) (pubgh.BlobVerifier, error) {
 		*called = true
 
 		return unusedVerifier(t), nil
@@ -415,7 +469,7 @@ func executeBundleFactory(
 	t *testing.T,
 	env map[string]string,
 	args []string,
-	newVerifier func(string) (pubgh.BlobVerifier, error),
+	newVerifier func(string, string) (pubgh.BlobVerifier, error),
 ) (string, error) {
 	t.Helper()
 

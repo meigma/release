@@ -130,8 +130,11 @@ type Options struct {
 	NewTagCommitter func(config RegistryConfig) (puboci.TagCommitter, error)
 	// BlobVerifier, when set, is the detached-bundle verification port. Tests inject it.
 	BlobVerifier pubgh.BlobVerifier
-	// NewBlobVerifier constructs the detached-bundle verification port for a distribution directory.
-	NewBlobVerifier func(dir string) (pubgh.BlobVerifier, error)
+	// NewBlobVerifier constructs the detached-bundle verification port from a
+	// Cosign binary path and a distribution directory.
+	//
+	// An empty path resolves cosign from PATH.
+	NewBlobVerifier func(path, dir string) (pubgh.BlobVerifier, error)
 	// settings is filled after flags are parsed.
 	settings *Settings
 }

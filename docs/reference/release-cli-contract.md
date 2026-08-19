@@ -410,22 +410,23 @@ Drift, an immutable exact-tag conflict, corrupt channel state, a registry failur
 | Value | Flag | Environment variable | Default |
 | --- | --- | --- | --- |
 | Distribution directory | `--dist` | `RELEASE_DIST` | None. A path is required. |
-| Certificate identity | `--identity` | `RELEASE_IDENTITY` | None. An exact identity URL is required. |
-| Certificate OIDC issuer | `--issuer` | `RELEASE_ISSUER` | `https://token.actions.githubusercontent.com` |
+| Certificate identity | `--identity` | `RELEASE_IDENTITY` | None. An exact, absolute HTTPS URL with a host is required. |
+| Certificate OIDC issuer | `--issuer` | `RELEASE_ISSUER` | `https://token.actions.githubusercontent.com`. The effective value must be an absolute HTTPS URL with a host. |
 | Cosign binary | None. | `RELEASE_COSIGN_PATH` | Resolve `cosign` from `PATH`. |
 | JSON output | `--json` | `RELEASE_JSON` | Disabled. |
 
-An explicitly set flag takes precedence over its environment variable. The identity must be a nonempty URL. `RELEASE_COSIGN_PATH` has no corresponding flag; set it to the Cosign executable when `cosign` is not on `PATH`.
+An explicitly set flag takes precedence over its environment variable. The identity and issuer must each be an absolute HTTPS URL with a host. `RELEASE_COSIGN_PATH` has no corresponding flag; set it to the Cosign executable when `cosign` is not on `PATH`.
 
-The command performs these checks in order:
+All local checks precede the Cosign invocation. The local checks enforce these requirements:
 
-1. Require `checksums.txt` and `checksums.txt.sigstore.json` to be regular files.
-2. Require every `checksums.txt` entry to be a regular file whose SHA-256 digest matches the manifest.
-3. Reject a manifest that lists either control file as a payload.
-4. Require the distribution directory to contain only the listed payloads and the two control files. An extra file, directory, symbolic link, or other entry fails this closed-set check.
-5. Verify the detached `checksums.txt.sigstore.json` bundle for `checksums.txt` against the exact certificate identity and OIDC issuer.
+- `checksums.txt` and `checksums.txt.sigstore.json` are regular files.
+- Every `checksums.txt` entry is a regular file whose SHA-256 digest matches the manifest.
+- Neither control file is listed as a payload.
+- The distribution directory contains only the listed payloads and the two control files. An extra file, directory, symbolic link, or other entry fails this closed-set check.
 
-Cosign is invoked only for the last step. A local parsing, file, digest, or closed-set failure means Cosign is never invoked. A local or Sigstore verification failure exits with code `1`. Missing or invalid configuration exits with code `2`.
+Only after the local checks succeed does the command verify the detached `checksums.txt.sigstore.json` bundle for `checksums.txt` against the exact certificate identity and OIDC issuer. Any local failure means Cosign is never invoked.
+
+Missing `--dist`/`RELEASE_DIST` or `--identity`/`RELEASE_IDENTITY`, and a malformed identity or issuer URL, are configuration errors and exit with code `2`. A local verification failure, a Sigstore verification failure, or an unresolvable Cosign binary exits with code `1`.
 
 ## Actions artifact handoff
 

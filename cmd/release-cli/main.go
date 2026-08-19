@@ -53,9 +53,9 @@ func run() int {
 				Stderr: os.Stderr,
 			}), nil
 		},
-		NewBlobVerifier: func(dir string) (pubgh.BlobVerifier, error) {
+		NewBlobVerifier: func(path, dir string) (pubgh.BlobVerifier, error) {
 			return cosign.NewVerifier(cosign.VerifierOptions{
-				Path:   os.Getenv("RELEASE_COSIGN_PATH"),
+				Path:   path,
 				Dir:    dir,
 				Stderr: os.Stderr,
 			}), nil

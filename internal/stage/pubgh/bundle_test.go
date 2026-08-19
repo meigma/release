@@ -98,6 +98,17 @@ func TestVerifyBundleClosedSetFailures(t *testing.T) {
 			wantErr: "unlisted or invalid release bundle entry: link",
 		},
 		{
+			name: "claimed payload is a symlink",
+			fsys: func(t *testing.T) fstest.MapFS {
+				t.Helper()
+				fsys := closedDist(t)
+				fsys["gamma.bin"] = &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("gamma")}
+
+				return fsys
+			},
+			wantErr: "unlisted or invalid release bundle entry: gamma.bin",
+		},
+		{
 			name: "missing payload",
 			fsys: func(t *testing.T) fstest.MapFS {
 				t.Helper()
@@ -158,7 +169,7 @@ func TestVerifyBundleClosedSetFailures(t *testing.T) {
 			assert.Contains(t, err.Error(), test.wantErr)
 			assert.Empty(t, got.Payloads)
 			assert.Empty(t, got.Controls)
-			verifier.AssertNotCalled(t, "Verify")
+			verifier.AssertNotCalled(t, "Verify", mock.Anything, mock.Anything)
 		})
 	}
 }
@@ -203,7 +214,7 @@ func TestVerifyBundleRejectsListedControls(t *testing.T) {
 			assert.Contains(t, err.Error(), test.wantErr)
 			assert.Empty(t, got.Payloads)
 			assert.Empty(t, got.Controls)
-			verifier.AssertNotCalled(t, "Verify")
+			verifier.AssertNotCalled(t, "Verify", mock.Anything, mock.Anything)
 		})
 	}
 }
@@ -226,6 +237,11 @@ func TestVerifyBundleRejectsChecksumGrammar(t *testing.T) {
 			claim:   "aaaa  archive.tar.gz\n",
 			wantErr: "malformed entry",
 		},
+		{
+			name:    "invalid payload name charset",
+			claim:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  .hidden\n",
+			wantErr: "is not a valid release payload name",
+		},
 	}
 
 	for _, test := range tests {
@@ -246,7 +262,7 @@ func TestVerifyBundleRejectsChecksumGrammar(t *testing.T) {
 			assert.Contains(t, err.Error(), test.wantErr)
 			assert.Empty(t, got.Payloads)
 			assert.Empty(t, got.Controls)
-			verifier.AssertNotCalled(t, "Verify")
+			verifier.AssertNotCalled(t, "Verify", mock.Anything, mock.Anything)
 		})
 	}
 }
@@ -375,6 +391,33 @@ func TestTrustPolicyNormalize(t *testing.T) {
 			policy:  pubgh.TrustPolicy{Identity: "http://github.com/owner/repo/.github/workflows/x.yml"},
 			wantErr: "is not an https URL",
 		},
+		{
+			name: "non-URL issuer",
+			policy: pubgh.TrustPolicy{
+				Identity: validIdentity,
+				Issuer:   "not a url",
+			},
+			wantErr: "is not an absolute URL",
+		},
+		{
+			name: "non-https issuer",
+			policy: pubgh.TrustPolicy{
+				Identity: validIdentity,
+				Issuer:   "http://token.actions.githubusercontent.com",
+			},
+			wantErr: "is not an https URL",
+		},
+		{
+			name: "empty issuer after spaces uses default",
+			policy: pubgh.TrustPolicy{
+				Identity: validIdentity,
+				Issuer:   "   ",
+			},
+			want: pubgh.TrustPolicy{
+				Identity: validIdentity,
+				Issuer:   defaultIssuer,
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -427,13 +470,16 @@ func closedDist(t *testing.T) fstest.MapFS {
 func expectedBundle(fsys fstest.MapFS) pubgh.Bundle {
 	return pubgh.Bundle{
 		Payloads: []pubgh.BundleEntry{
-			{Name: "gamma.bin", Digest: digestOf([]byte("gamma"))},
-			{Name: "alpha.bin", Digest: digestOf([]byte("alpha"))},
-			{Name: "beta.bin", Digest: digestOf([]byte("beta"))},
+			{Name: "gamma.bin", Digest: stage.Digest(digestOf([]byte("gamma")))},
+			{Name: "alpha.bin", Digest: stage.Digest(digestOf([]byte("alpha")))},
+			{Name: "beta.bin", Digest: stage.Digest(digestOf([]byte("beta")))},
 		},
 		Controls: []pubgh.BundleEntry{
-			{Name: "checksums.txt", Digest: digestOf(fsys["checksums.txt"].Data)},
-			{Name: "checksums.txt.sigstore.json", Digest: digestOf(fsys["checksums.txt.sigstore.json"].Data)},
+			{Name: "checksums.txt", Digest: stage.Digest(digestOf(fsys["checksums.txt"].Data))},
+			{
+				Name:   "checksums.txt.sigstore.json",
+				Digest: stage.Digest(digestOf(fsys["checksums.txt.sigstore.json"].Data)),
+			},
 		},
 	}
 }

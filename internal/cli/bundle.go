@@ -54,7 +54,7 @@ func runBundle(cmd *cobra.Command, options Options) error {
 	}
 	defer root.Close()
 
-	verifier, err := blobVerifier(options, expected.Dist)
+	verifier, err := blobVerifier(options, expected)
 	if err != nil {
 		return writeCommandResult(options, commandBundle, nil, err)
 	}
@@ -98,6 +98,8 @@ type bundleConfig struct {
 	Dist string
 	// Trust is the already-normalized Sigstore identity policy.
 	Trust pubgh.TrustPolicy
+	// CosignPath is RELEASE_COSIGN_PATH. Empty resolves cosign from PATH.
+	CosignPath string
 }
 
 // resolveBundle parses flags and environment into a bundle configuration.
@@ -127,13 +129,14 @@ func resolveBundle(options Options) (bundleConfig, error) {
 	}
 
 	return bundleConfig{
-		Dist:  settings.Dist,
-		Trust: policy,
+		Dist:       settings.Dist,
+		Trust:      policy,
+		CosignPath: resolveCosignPath(options.LookupEnv),
 	}, nil
 }
 
 // blobVerifier returns the injected verification port or constructs one.
-func blobVerifier(options Options, dir string) (pubgh.BlobVerifier, error) {
+func blobVerifier(options Options, expected bundleConfig) (pubgh.BlobVerifier, error) {
 	if options.BlobVerifier != nil {
 		return options.BlobVerifier, nil
 	}
@@ -141,7 +144,7 @@ func blobVerifier(options Options, dir string) (pubgh.BlobVerifier, error) {
 		return nil, errors.New("blob verifier factory is not configured")
 	}
 
-	verifier, err := options.NewBlobVerifier(dir)
+	verifier, err := options.NewBlobVerifier(expected.CosignPath, expected.Dist)
 	if err != nil {
 		return nil, UsageError(fmt.Errorf("cosign: %w", err))
 	}
@@ -169,9 +172,14 @@ func bundleFileResults(entries []pubgh.BundleEntry) []BundleFileResult {
 	for _, entry := range entries {
 		result = append(result, BundleFileResult{
 			Name:   entry.Name,
-			Digest: entry.Digest,
+			Digest: bundleEntryDigest(entry),
 		})
 	}
 
 	return result
+}
+
+// bundleEntryDigest returns the JSON digest string for one bundle entry.
+func bundleEntryDigest(entry pubgh.BundleEntry) string {
+	return entry.Digest.String()
 }

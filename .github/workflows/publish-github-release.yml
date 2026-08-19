@@ -248,9 +248,16 @@ jobs:
           )"
           printf '%s\n' "${envelope}"
 
-          # Payloads in checksums.txt order, then checksums.txt, then its bundle.
-          assets="$(jq -ce --arg prefix "${GITHUB_WORKSPACE}/dist" '
-            [.result.payloads[], .result.controls[]] | map($prefix + "/" + .name)
+          # Payloads in checksums.txt order, then checksums.txt, then its bundle,
+          # rooted at the directory the CLI reports it actually verified.
+          assets="$(jq -ce --arg workspace "${GITHUB_WORKSPACE}" '
+            .result
+            | if (.dist | type) != "string" or (.dist | length) == 0 then
+                error("envelope reported no distribution directory")
+              else . end
+            | ($workspace + "/" + .dist) as $prefix
+            | [.payloads[], .controls[]]
+            | map($prefix + "/" + .name)
           ' <<<"${envelope}")"
           digests="$(jq -ce '
             [.result.payloads[], .result.controls[]]

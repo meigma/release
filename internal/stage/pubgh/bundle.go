@@ -60,7 +60,7 @@ type BundleEntry struct {
 	// Name is the flat file name inside the distribution directory.
 	Name string
 	// Digest is the lowercase SHA-256 hex digest with no prefix.
-	Digest string
+	Digest stage.Digest
 }
 
 // Bundle is a closed, checksummed release distribution.
@@ -74,30 +74,25 @@ type Bundle struct {
 	Controls []BundleEntry
 }
 
-// Normalize fills the default issuer and rejects an empty or non-URL identity.
+// Normalize fills the default issuer and rejects an empty or non-URL identity
+// or issuer.
 //
 // Identity must be an absolute https URL. An empty issuer becomes
-// https://token.actions.githubusercontent.com.
+// https://token.actions.githubusercontent.com. The issuer, after defaulting,
+// must also be an absolute https URL.
 func (p TrustPolicy) Normalize() (TrustPolicy, error) {
-	identity := strings.TrimSpace(p.Identity)
-	if identity == "" {
-		return TrustPolicy{}, errors.New("certificate identity is empty")
-	}
-
-	parsed, err := url.Parse(identity)
+	identity, err := parseHTTPSURL("certificate identity", p.Identity)
 	if err != nil {
-		return TrustPolicy{}, fmt.Errorf("certificate identity %q is not an absolute URL: %w", identity, err)
-	}
-	if !parsed.IsAbs() || parsed.Host == "" {
-		return TrustPolicy{}, fmt.Errorf("certificate identity %q is not an absolute URL", identity)
-	}
-	if parsed.Scheme != "https" {
-		return TrustPolicy{}, fmt.Errorf("certificate identity %q is not an https URL", identity)
+		return TrustPolicy{}, err
 	}
 
 	issuer := strings.TrimSpace(p.Issuer)
 	if issuer == "" {
 		issuer = defaultOIDCIssuer
+	}
+	issuer, err = parseHTTPSURL("certificate issuer", issuer)
+	if err != nil {
+		return TrustPolicy{}, err
 	}
 
 	return TrustPolicy{Identity: identity, Issuer: issuer}, nil
@@ -121,9 +116,11 @@ func (b Bundle) Names() []string {
 // Every claimed payload must be a regular file whose digest matches. Both
 // control files must exist as regular files and must not appear in the claim.
 // The directory must contain nothing else: no extra file, directory, symlink,
-// or irregular entry. Payload digests are checked with [stage.VerifyBundle].
-// Control digests are streamed with [io.Copy] into [sha256.New]. A nil
-// filesystem is rejected. The first offending entry is named in the error.
+// or irregular entry. The closed-set scan uses each [fs.DirEntry] mode so
+// a symlink is refused rather than followed. Payload digests are then
+// checked with [stage.VerifyBundle]. Control digests are streamed with
+// [io.Copy] into [sha256.New]. A nil filesystem is rejected. The first
+// offending entry is named in the error.
 func BuildBundle(fsys fs.FS, claim stage.ChecksumSet) (Bundle, error) {
 	if fsys == nil {
 		return Bundle{}, errors.New("filesystem is nil")
@@ -171,11 +168,10 @@ func buildBundle(fsys fs.FS, claim stage.ChecksumSet) (Bundle, error) {
 		}
 		claimed[name] = struct{}{}
 	}
-
-	if err := stage.VerifyBundle(fsys, claim); err != nil {
+	if err := checkClosedSet(fsys, claimed); err != nil {
 		return Bundle{}, err
 	}
-	if err := checkClosedSet(fsys, claimed); err != nil {
+	if err := stage.VerifyBundle(fsys, claim); err != nil {
 		return Bundle{}, err
 	}
 
@@ -192,7 +188,7 @@ func buildBundle(fsys fs.FS, claim stage.ChecksumSet) (Bundle, error) {
 	for _, entry := range claim.Entries() {
 		payloads = append(payloads, BundleEntry{
 			Name:   entry.Name.String(),
-			Digest: entry.Digest.String(),
+			Digest: entry.Digest,
 		})
 	}
 
@@ -225,7 +221,7 @@ func verifyBundle(
 		return Bundle{}, fmt.Errorf("close %s: %w", checksumsName, closeErr)
 	}
 
-	bundle, err := BuildBundle(fsys, claim)
+	bundle, err := buildBundle(fsys, claim)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -288,8 +284,8 @@ func checkClosedSet(fsys fs.FS, claimed map[string]struct{}) error {
 	return nil
 }
 
-// hashFile streams name through SHA-256 and returns lowercase hex.
-func hashFile(fsys fs.FS, name string) (string, error) {
+// hashFile streams name through SHA-256 and returns a [stage.Digest].
+func hashFile(fsys fs.FS, name string) (stage.Digest, error) {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", name, err)
@@ -301,10 +297,31 @@ func hashFile(fsys fs.FS, name string) (string, error) {
 		return "", fmt.Errorf("hash %s: %w", name, copyErr)
 	}
 
-	return hex.EncodeToString(sum.Sum(nil)), nil
+	return stage.Digest(hex.EncodeToString(sum.Sum(nil))), nil
 }
 
 // isControl reports whether name is a reserved control file.
 func isControl(name string) bool {
 	return name == checksumsName || name == bundleName
+}
+
+// parseHTTPSURL requires raw to be a nonempty absolute https URL.
+func parseHTTPSURL(label, raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("%s is empty", label)
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", fmt.Errorf("%s %q is not an absolute URL: %w", label, value, err)
+	}
+	if !parsed.IsAbs() || parsed.Host == "" {
+		return "", fmt.Errorf("%s %q is not an absolute URL", label, value)
+	}
+	if parsed.Scheme != "https" {
+		return "", fmt.Errorf("%s %q is not an https URL", label, value)
+	}
+
+	return value, nil
 }
