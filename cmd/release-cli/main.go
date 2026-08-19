@@ -53,6 +53,13 @@ func run() int {
 				Stderr: os.Stderr,
 			}), nil
 		},
+		NewBlobVerifier: func(dir string) (pubgh.BlobVerifier, error) {
+			return cosign.NewVerifier(cosign.VerifierOptions{
+				Path:   os.Getenv("RELEASE_COSIGN_PATH"),
+				Dir:    dir,
+				Stderr: os.Stderr,
+			}), nil
+		},
 		Build: cli.BuildInfo{
 			Version:  version,
 			Commit:   commit,
