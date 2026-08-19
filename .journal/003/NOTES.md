@@ -32,3 +32,46 @@ Current state of the world:
 Plan: wait for the developer's stated goal. If it is the release program,
 re-read `.journal/002/PLAN.md` and `ARCHITECTURE.md` before touching code and
 follow the standing per-PR method.
+
+
+## 2026-08-18 21:55 — PR 3 underway
+
+Goal set: execute PR 3 of `.journal/002/PLAN.md` — `feat(oci): plan immutable release tags`.
+
+Worktree `.wt/feat-release-cli-slice3` created from fetched `origin/main`
+(`2c262ba`), branch `feat/release-cli-slice3`.
+
+Contract decided before spawning any agent (this is the cross-agent
+interface; wave agents code against it verbatim):
+
+- `internal/rel`: `Version`/`ParseVersion`/`Compare`/`Tag`, `Digest`,
+  `Tag`/`ParseTag`, `Scope` (exact/minor/major/latest), `Channel`,
+  `ChannelsFor`, `TagState`, `ChannelState`, `Action`
+  (create/accept/retain), `Decision`, `TagPlan.Apply`, `PlanTags`,
+  sentinels `ErrImmutableTag`/`ErrChannelCorrupt`/`ErrStateIncomplete`,
+  and a redacting `Secret`.
+- `internal/stage/puboci`: `Image`/`ParseImage`, `Reference`, sentinels
+  `ErrTagAbsent`/`ErrRetryable`/`ErrCorruptState`, the `StateReader` port,
+  `CollectState`, `PlanTags`.
+- `internal/adapter/reg`: oras-go v2 read client (`New`, `Resolve`,
+  `Version`) with `Credentials{Username, Password rel.Secret}`.
+- CLI: `plan tags [--image] [--version] --digest [--json]`, derived
+  defaults from `GITHUB_REPOSITORY`/`GITHUB_REF_NAME`, envelope command
+  `plan tags`, result `{image, version, digest, tags, decisions[]}` where
+  `tags` is only the `create` decisions.
+
+Deliberate divergences from the YAML being replaced, both fail-closed:
+version components must fit `uint64` (the JS used BigInt), and
+`CollectState` propagates a precise corrupt-annotation error instead of
+handing the planner a `HasVersion=false` state.
+
+Execution: wave 1 = `RelCore` (internal/rel) + `ContractDocs`
+(docs/reference). Both complete. `ContractDocs` caught a real
+inconsistency in my example payload — I had listed all four tags under
+`tags` while two decisions were accept/retain; corrected to create-only.
+Wave 2 in flight: `Puboci` (engine + port + mockery), `Reg` (adapter +
+go.mod tidy), `CliTags` (command + root wiring + main).
+
+Dependencies pre-added by the parent so agents do not race on `go.mod`:
+`oras.land/oras-go/v2 v2.6.2` (spike B's pinned version) and test-only
+`github.com/google/go-containerregistry v0.21.9`.
