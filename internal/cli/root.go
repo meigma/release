@@ -27,6 +27,12 @@ const (
 	envImage = "RELEASE_IMAGE"
 	// envVersion is the environment variable for --version.
 	envVersion = "RELEASE_VERSION"
+	// envLayout is the environment variable for --layout.
+	envLayout = "RELEASE_LAYOUT"
+	// envDryRun is the environment variable for --dry-run.
+	envDryRun = "RELEASE_DRY_RUN"
+	// envPlainHTTP is the environment variable for --plain-http.
+	envPlainHTTP = "RELEASE_PLAIN_HTTP"
 )
 
 // LookupEnv looks up an environment variable.
@@ -52,6 +58,12 @@ type Settings struct {
 	Version string
 	// Digest is the selected --digest / RELEASE_DIGEST value.
 	Digest string
+	// Layout is the selected --layout / RELEASE_LAYOUT path.
+	Layout string
+	// DryRun reports whether --dry-run / RELEASE_DRY_RUN requested a dry run.
+	DryRun bool
+	// PlainHTTP reports whether --plain-http / RELEASE_PLAIN_HTTP requested HTTP.
+	PlainHTTP bool
 	// JSON reports whether --json / RELEASE_JSON requested structured output.
 	JSON bool
 }
@@ -64,6 +76,14 @@ type BuildInfo struct {
 	Commit string
 	// Protocol is the workflow/binary contract integer.
 	Protocol int
+}
+
+// RegistryConfig is the resolved registry client configuration.
+type RegistryConfig struct {
+	// Credentials authenticates registry reads and writes. An empty password is anonymous.
+	Credentials RegistryCredentials
+	// PlainHTTP forces HTTP instead of HTTPS. Tests use this against a local registry.
+	PlainHTTP bool
 }
 
 // Options customizes root command construction.
@@ -84,8 +104,18 @@ type Options struct {
 	NewArtifactMeta func(token string, endpoint GitHubEndpoint) (pubgh.ArtifactMeta, error)
 	// StateReader, when set, is the registry read port. Tests inject it.
 	StateReader puboci.StateReader
-	// NewStateReader constructs the registry read port from resolved credentials.
-	NewStateReader func(credentials RegistryCredentials) (puboci.StateReader, error)
+	// NewStateReader constructs the registry read port from resolved registry config.
+	NewStateReader func(config RegistryConfig) (puboci.StateReader, error)
+	// ContentPusher, when set, is the registry write port. Tests inject it.
+	ContentPusher puboci.ContentPusher
+	// NewContentPusher constructs the registry write port from resolved registry config.
+	NewContentPusher func(config RegistryConfig) (puboci.ContentPusher, error)
+	// Signer, when set, is the Cosign signing port. Tests inject it.
+	Signer puboci.Signer
+	// NewSigner constructs the Cosign signing port from a binary path.
+	//
+	// An empty path resolves cosign from PATH.
+	NewSigner func(path string) (puboci.Signer, error)
 	// settings is filled after flags are parsed.
 	settings *Settings
 }
@@ -123,6 +153,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.AddCommand(newStageCommand(options))
 	root.AddCommand(newPlanCommand(options))
 	root.AddCommand(newVerifyCommand(options))
+	root.AddCommand(newPublishCommand(options))
 	root.AddCommand(newVersionCommand(options))
 
 	return root
@@ -174,6 +205,9 @@ func resolveSettings(cmd *cobra.Command, lookup LookupEnv) Settings {
 		Image:      resolveString(cmd, flagImage, envImage, lookup),
 		Version:    resolveString(cmd, flagVersion, envVersion, lookup),
 		Digest:     resolveString(cmd, flagDigest, envDigest, lookup),
+		Layout:     resolveString(cmd, flagLayout, envLayout, lookup),
+		DryRun:     resolveBool(cmd, flagDryRun, envDryRun, lookup),
+		PlainHTTP:  resolveBool(cmd, flagPlainHTTP, envPlainHTTP, lookup),
 		JSON:       resolveBool(cmd, "json", envJSON, lookup),
 	}
 }

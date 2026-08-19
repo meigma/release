@@ -92,6 +92,7 @@ func newTagsCommand(options Options) *cobra.Command {
 	cmd.Flags().String(flagImage, "", "OCI image name without a tag or digest")
 	cmd.Flags().String(flagVersion, "", "stable MAJOR.MINOR.PATCH version")
 	cmd.Flags().String(flagDigest, "", "candidate OCI index digest")
+	cmd.Flags().Bool(flagPlainHTTP, false, "use HTTP instead of HTTPS for the registry")
 
 	return cmd
 }
@@ -107,7 +108,7 @@ func runPlanTags(cmd *cobra.Command, options Options) error {
 		return writeCommandResult(options, commandPlanTags, nil, UsageError(err))
 	}
 
-	reader, err := stateReader(options, expected.Credentials)
+	reader, err := stateReader(options, expected.Registry)
 	if err != nil {
 		return writeCommandResult(options, commandPlanTags, nil, err)
 	}
@@ -137,8 +138,8 @@ type tagsConfig struct {
 	Version rel.Version
 	// Digest is the candidate image digest.
 	Digest rel.Digest
-	// Credentials authenticates registry reads. An empty password is anonymous.
-	Credentials RegistryCredentials
+	// Registry authenticates and configures the registry client.
+	Registry RegistryConfig
 }
 
 // resolveTags parses flags and Actions environment into a plan-tags config.
@@ -164,10 +165,10 @@ func resolveTags(options Options) (tagsConfig, error) {
 	}
 
 	return tagsConfig{
-		Image:       image,
-		Version:     version,
-		Digest:      digest,
-		Credentials: resolveRegistryCredentials(options.LookupEnv),
+		Image:    image,
+		Version:  version,
+		Digest:   digest,
+		Registry: resolveRegistryConfig(settings, options.LookupEnv),
 	}, nil
 }
 
@@ -256,8 +257,8 @@ func resolveRegistryCredentials(lookup LookupEnv) RegistryCredentials {
 	}
 }
 
-// stateReader returns the injected port or constructs one from credentials.
-func stateReader(options Options, credentials RegistryCredentials) (puboci.StateReader, error) {
+// stateReader returns the injected port or constructs one from registry config.
+func stateReader(options Options, config RegistryConfig) (puboci.StateReader, error) {
 	if options.StateReader != nil {
 		return options.StateReader, nil
 	}
@@ -265,7 +266,7 @@ func stateReader(options Options, credentials RegistryCredentials) (puboci.State
 		return nil, errors.New("state reader factory is not configured")
 	}
 
-	reader, err := options.NewStateReader(credentials)
+	reader, err := options.NewStateReader(config)
 	if err != nil {
 		return nil, UsageError(fmt.Errorf("registry client: %w", err))
 	}
