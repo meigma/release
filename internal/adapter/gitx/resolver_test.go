@@ -21,8 +21,11 @@ const (
 	testLightweightTag = "v1.2.3"
 	testAnnotatedTag   = "v1.2.3-annotated"
 	testMissingTag     = "missing-tag"
-	// cancelWait is how long the cancel test waits for the fake to start
-	// and then for Resolve to return.
+	// startWait is how long cancelAfterStart waits for the fake to
+	// create its start marker. The budget is load-dependent, not a
+	// contract, and only bounds how a hung fixture is reported.
+	startWait = 30 * time.Second
+	// cancelWait is how long Resolve must return after cancel.
 	cancelWait = 2 * time.Second
 	// cancelPoll is the interval used while waiting for the fake to start.
 	cancelPoll    = 10 * time.Millisecond
@@ -266,7 +269,7 @@ func mustTag(t *testing.T, raw string) rel.Tag {
 
 // cancelAfterStart runs Resolve, cancels after the fake starts, and
 // returns the call error. It fails the test if the call exceeds
-// [cancelWait].
+// [cancelWait] after cancel. Waiting for the start marker uses [startWait].
 func cancelAfterStart(
 	t *testing.T,
 	path string,
@@ -289,7 +292,7 @@ func cancelAfterStart(
 		_, statErr := os.Stat(started)
 
 		return statErr == nil
-	}, cancelWait, cancelPoll)
+	}, startWait, cancelPoll)
 	cancel()
 
 	select {

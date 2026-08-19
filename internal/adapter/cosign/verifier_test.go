@@ -236,7 +236,8 @@ func TestVerifyRejectsBeforeStart(t *testing.T) {
 }
 
 // cancelVerifyAfterStart runs Verify, cancels after the fake starts, and
-// returns the call error. It fails the test if the call exceeds bound.
+// returns the call error. It fails the test if the call exceeds bound
+// after cancel. Waiting for the start marker uses [startWait].
 func cancelVerifyAfterStart(
 	t *testing.T,
 	path string,
@@ -262,7 +263,7 @@ func cancelVerifyAfterStart(
 		_, statErr := os.Stat(started)
 
 		return statErr == nil
-	}, bound, cancelPoll)
+	}, startWait, cancelPoll)
 	cancel()
 
 	select {

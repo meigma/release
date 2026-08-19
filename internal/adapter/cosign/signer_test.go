@@ -20,8 +20,11 @@ import (
 const (
 	testDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	testImage  = "ghcr.io/owner/repo"
-	// cancelWait is how long the cancel test waits for the fake to start
-	// and then for SignRecursive to return.
+	// startWait is how long cancelAfterStart waits for the fake to
+	// create its start marker. The budget is load-dependent, not a
+	// contract, and only bounds how a hung fixture is reported.
+	startWait = 30 * time.Second
+	// cancelWait is how long SignRecursive must return after cancel.
 	cancelWait = 2 * time.Second
 	// cancelPoll is the interval used while waiting for the fake to start.
 	cancelPoll       = 10 * time.Millisecond
@@ -261,7 +264,8 @@ func skipWindows(t *testing.T) {
 }
 
 // cancelAfterStart runs SignRecursive, cancels after the fake starts, and
-// returns the call error. It fails the test if the call exceeds bound.
+// returns the call error. It fails the test if the call exceeds bound
+// after cancel. Waiting for the start marker uses [startWait].
 func cancelAfterStart(
 	t *testing.T,
 	path string,
@@ -283,7 +287,7 @@ func cancelAfterStart(
 		_, err := os.Stat(started)
 
 		return err == nil
-	}, bound, cancelPoll)
+	}, startWait, cancelPoll)
 	cancel()
 
 	select {
