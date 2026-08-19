@@ -307,3 +307,68 @@ every mock, because its cache still referenced a deleted worktree
 (`.wt/feat-release-cli-slice3b`) and the exclusion stage failed to read
 those paths. `golangci-lint cache clean` fixed it. After removing a
 worktree, clear the lint cache before trusting a lint failure.
+
+## 2026-08-19 12:45 — PR 5 merged, PR 6 open: meigma/release#13
+
+PR #12 merged as `3a649f0`. PR 6 (`feat(release): verify signed release
+bundles`) is open as #13 on `feat/release-cli-slice4a`, two commits
+(`3dfb22d`, plus the round-1 fix commit), `moon run root:check` green,
+both PR checks pass. Not merged — a human accepts.
+
+Shipped: closed `Bundle` reconciliation with the `BlobVerifier` port
+(10 of 13), the `cosign verify-blob` adapter, `verify bundle`, and the
+`publish-github-release.yml` cutover. verify → attest → upload is intact
+and permissions are untouched.
+
+### Smoke used the real published release
+
+Downloaded all 14 assets of `v0.1.0` and verified them with the real
+pinned cosign against the real Fulcio identity
+`…/go-pre-publish.yml@refs/tags/v0.1.0`: 12 payloads plus both controls,
+exit 0. Negatives against the same real bundle: extra unlisted file,
+tampered payload, payload replaced by a symlink, missing sigstore
+bundle, and a wrong signer identity (`no matching CertificateIdentity
+found`) all exit 1. A recording cosign wrapper proved zero invocations on
+a local failure and exactly one on success.
+
+### Review round 1: two blocking findings, both proven by experiment
+
+1. **The asset-name grammar had been silently dropped.** The replaced JS
+   matched `^([0-9A-Fa-f]{64}) [ *]([A-Za-z0-9][A-Za-z0-9._+-]*)$`;
+   `stage.ParseAssetName` only rejected empty names and path separators,
+   so `.hidden`, `my file.tar.gz`, and a tab-bearing name verified and
+   exited 0 — while this same PR's docs claimed the CLI enforced the
+   character set. Reviewer demonstrated it with the built binary. Fixed
+   in `stage.ParseAssetName` so `stage` and `verify bundle` share one
+   definition. **Lesson: when a port replaces a regex, diff the regex,
+   not the prose.**
+2. **The symlink defence was untested and the table could not reach it.**
+   Every hostile row used an *unlisted* name, so all three exited through
+   the "unlisted entry" branch and never reached the regular-file check.
+   Reviewer mutated the code: deleting that check entirely left the whole
+   suite green, and the mutant binary then accepted a symlinked payload.
+   `os.Root` follows in-root symlinks and `fs.Stat` resolves them, so the
+   directory-scan mode check is the only protection. Now the closed-set
+   scan runs before hashing, and both a MapFS case and a real
+   `os.Symlink` case pin it.
+
+Also fixed: the issuer is now validated like the identity (a malformed
+issuer was reaching cosign and failing at exit 1 instead of exit 2);
+`RELEASE_COSIGN_PATH` resolves through the injected env seam like the
+signer path, so it is testable; the workflow derives the asset prefix
+from the envelope's own `.result.dist` instead of repeating the literal;
+`AssertNotCalled` with no matchers can never fail (testify's `Diff` walks
+the recorded args) and was replaced; `BundleEntry.Digest` now uses
+`stage.Digest`; and three reference statements plus two stale `doc.go`
+comments were corrected.
+
+### Carrying forward
+
+- Mockery's testify template emits no Godoc for generated expecter types.
+  Third slice in a row this is raised; it is a template-wide change and
+  stays out of scope until someone does it deliberately.
+- Next slice is PR 7 (`feat(release): publish verified GitHub releases`),
+  which brings four ports at once — `ReleaseReader`, `AssetReplacer`,
+  `Publisher`, `RefResolver` — plus `ghrel`, `ghup`, and `gitx`. That is
+  the largest port batch in the program; consider splitting the wave by
+  adapter.
