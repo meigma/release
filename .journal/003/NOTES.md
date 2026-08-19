@@ -132,3 +132,39 @@ Other things worth keeping:
 - Wave-based dispatch worked: `rel` and docs first, then `puboci`/`reg`/
   `cli` against a contract fixed up front, with `Puboci` broadcasting over
   hub when its package compiled and when the mock existed.
+
+## 2026-08-19 07:45 — PR 3 merged, PR 4 started
+
+PR #10 squash-merged as `de75a92`; remote branch and `.wt` worktree
+removed. Note for future merges: `gh pr merge --delete-branch` fails in a
+Worktrunk worktree (`fatal: 'main' is already used by worktree at ...`)
+*after* the merge succeeds — the merge lands, only the local branch
+switch/delete fails. Verify with `gh pr view --json state` before
+retrying, then clean up with `wt remove` plus `git push origin --delete`.
+
+PR 4 (`feat(oci): prepare digest publication`) started in
+`.wt/feat-release-cli-slice3b` from `origin/main` (`de75a92`).
+
+Contract fixed before spawning: `puboci.Descriptor`, `DigestRef`
+(`image@sha256:…`, since signing and content pushes must be digest-pinned
+while the shipped `Reference` is tag-based), ports `ContentPusher`
+(PushBlob/PushManifest/Verify) and `Signer` (SignRecursive) — ports 3 and
+5 of the closed 13 — `ReadLayout` over `fs.FS`, and the
+`release.dev/oci-prepare/v1` result.
+
+Deviations from PLAN.md's indicative signatures, deliberate:
+
+- `Repository` in the plan is the already-shipped `Image`; no synonym.
+- `Verify(ctx, ref DigestRef)` instead of `Verify(ctx, ref, expected)`:
+  a digest-pinned reference already carries the expectation.
+- `OCIPrepareResult.ObservedState rel.ChannelState` cannot be JSON: its
+  map is keyed by a struct. The wire type carries an ordered
+  `observed[]` projection (exact, minor, major, latest) instead.
+- No SBOM paths in the attestation subjects. Subjects are
+  platform+digest; SBOM file names stay the workflow's business until the
+  image slices own them.
+
+Also adding `--plain-http` to the CLI: PLAN.md's own PR-4 verification
+asks for an in-memory-registry CLI smoke, which is impossible over HTTPS.
+Explicit flag, documented as local-registry only, rather than implicitly
+downgrading loopback.
