@@ -1,11 +1,13 @@
 package reg
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
+	"oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/meigma/release/internal/rel"
 	"github.com/meigma/release/internal/stage/puboci"
@@ -34,50 +36,59 @@ type Options struct {
 	// local registry.
 	PlainHTTP bool
 
-	// HTTPClient is the optional transport. Nil selects a default client.
+	// HTTPClient is the optional transport. Nil selects
+	// [retry.DefaultClient]. An injected client is used as-is so tests stay
+	// deterministic.
 	HTTPClient *http.Client
 }
 
 // Client reads tag state from a GHCR-compatible registry.
 //
 // It implements [puboci.StateReader]. It never pushes, tags, or deletes.
+// Credential material is captured inside the auth client's closure and is
+// not stored on this value.
 type Client struct {
-	// auth is the shared oras auth client. Credential is applied per
-	// request so the registry host is known and token text is not stored
-	// on this value.
+	// auth is the shared oras auth client.
 	auth *auth.Client
 
-	// options is the constructor configuration, including the redacted
-	// secret used to build per-request credentials.
-	options Options
+	// plainHTTP forces HTTP instead of HTTPS.
+	plainHTTP bool
+
+	// authenticated reports whether New captured credentials.
+	authenticated bool
 }
 
 // New constructs a [Client] from options.
 //
-// Token text stays inside [rel.Secret] until a request is built. The
-// returned client is safe to format: password text is never a plain field.
+// A nil HTTPClient selects [retry.DefaultClient]. When credentials are
+// present, [rel.Secret.Reveal] is called once and the token is captured
+// only inside the auth credential closure.
 func New(options Options) *Client {
+	httpClient := options.HTTPClient
+	if httpClient == nil {
+		httpClient = retry.DefaultClient
+	}
+
+	authClient := &auth.Client{
+		Client: httpClient,
+		Cache:  auth.NewCache(),
+	}
+	authenticated := options.Credentials.Username != "" || !options.Credentials.Password.IsEmpty()
+	if authenticated {
+		cred := auth.Credential{
+			Username: options.Credentials.Username,
+			Password: options.Credentials.Password.Reveal(),
+		}
+		authClient.Credential = func(context.Context, string) (auth.Credential, error) {
+			return cred, nil
+		}
+	}
+
 	return &Client{
-		auth: &auth.Client{
-			Client: options.HTTPClient,
-			Cache:  auth.NewCache(),
-		},
-		options: options,
+		auth:          authClient,
+		plainHTTP:     options.PlainHTTP,
+		authenticated: authenticated,
 	}
-}
-
-// String reports the client without credential material.
-func (c *Client) String() string {
-	if c == nil {
-		return "<nil>"
-	}
-
-	return fmt.Sprintf("reg.Client{authenticated:%t plainHTTP:%t}", c.hasCredentials(), c.options.PlainHTTP)
-}
-
-// GoString reports the client without credential material.
-func (c *Client) GoString() string {
-	return c.String()
 }
 
 // repository builds a remote repository client for ref.
@@ -87,21 +98,8 @@ func (c *Client) repository(ref puboci.Reference) (*remote.Repository, error) {
 		return nil, fmt.Errorf("parse repository: %w", err)
 	}
 
-	authClient := *c.auth
-	if c.hasCredentials() {
-		authClient.Credential = auth.StaticCredential(repo.Reference.Host(), auth.Credential{
-			Username: c.options.Credentials.Username,
-			Password: c.options.Credentials.Password.Reveal(),
-		})
-	}
-
-	repo.Client = &authClient
-	repo.PlainHTTP = c.options.PlainHTTP
+	repo.Client = c.auth
+	repo.PlainHTTP = c.plainHTTP
 
 	return repo, nil
-}
-
-// hasCredentials reports whether options include a username or password.
-func (c *Client) hasCredentials() bool {
-	return c.options.Credentials.Username != "" || !c.options.Credentials.Password.IsEmpty()
 }

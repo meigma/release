@@ -101,12 +101,13 @@ The `verify handoff --json` result contains this object:
 | `artifact.run_id` | number | Workflow run ID associated with the artifact. |
 | `artifact.expires_at` | string | Artifact expiration time in RFC 3339 format, or an empty string if GitHub omitted it. |
 
-After successful parsing, a command failure under `--json` sets `ok` to `false`
-and gives `result` one string field named `error`. The command also returns its
-nonzero exit code. If parsing itself fails because of an unknown command or
-flag, an invalid flag value, or the wrong number of arguments, no envelope is
-written; the usage error goes to stderr and the process exits with code
-`2`.
+After command-line parsing and dispatch succeed, a command or configuration
+failure under `--json` sets `ok` to `false` and gives `result` one string field
+named `error`. The command also returns its nonzero exit code. Configuration
+failures return code `2` and still emit exactly one envelope. Only command-line
+parse or dispatch failures skip the envelope. These include an unknown command
+or flag, an invalid flag value, or the wrong number of arguments. The usage
+error goes to stderr and the process exits with code `2`.
 
 Without `--json`, a successful `plan tags`, `stage`, or `verify handoff` command writes nothing to stdout. A successful `version` command writes `release-cli <version> (<commit>, protocol <n>)` to stdout because the version data is the requested output and can be piped. This human format is a convenience, not a stable interface. Human diagnostics and warnings go to stderr. With `--json`, the envelope is the stable machine-readable stdout contract for all commands.
 
@@ -129,7 +130,7 @@ No other exit code is defined; in particular, code `3` has no meaning. An exit c
 | Image | `--image` | `RELEASE_IMAGE` | `ghcr.io/<owner>/<repo>`, lowercased from `GITHUB_REPOSITORY`. |
 | Version | `--version` | `RELEASE_VERSION` | `GITHUB_REF_NAME` with one optional leading `v` stripped. |
 | Digest | `--digest` | `RELEASE_DIGEST` | None. A digest is required. |
-| JSON output | `--json` | None | Disabled. |
+| JSON output | `--json` | `RELEASE_JSON` | Disabled. |
 
 An explicitly set flag takes precedence over its environment variable. The derived default applies only when the corresponding flag and release environment variable are absent. The image must have the lowercase form `host/path[/path...]` without a tag or digest. The digest must have the `sha256:` prefix followed by 64 hexadecimal digits.
 
@@ -142,7 +143,7 @@ The command resolves registry credentials in this order:
 
 If neither token is present, the command reads the registry anonymously. Anonymous reads work only for public packages.
 
-Missing or invalid configuration exits with code `2`. A planning or registry failure exits with code `1`.
+Missing or invalid configuration exits with code `2`. Under `--json`, this failure still writes exactly one envelope with `ok` set to `false`. A planning or registry failure exits with code `1`.
 
 `plan tags` performs registry reads only. It never writes a tag, blob, or manifest. The reusable publisher workflow still owns tag application in this release. Its existing `actions/github-script` tag planner remains authoritative for publication. The workflow does not call `plan tags` in this release. The command supports planning and inspection only.
 
@@ -173,6 +174,8 @@ The command then evaluates channels in this order:
 | `latest` | `latest` | No release-line check. |
 
 An absent channel gets a `create` decision. A channel that already resolves to the candidate digest gets an `accept` decision. Otherwise, the command reads the current manifest's `org.opencontainers.image.version` annotation. A missing or invalid stable-version annotation fails planning. A minor or major channel outside its required release line also fails planning.
+
+Failure ordering differs from the publisher workflow. The workflow checks the exact tag before it resolves any channel. The CLI collects the exact tag and all three channels before it decides the plan. If an immutable-tag conflict and a corrupt channel exist together, the CLI may report the channel failure instead of the immutable-tag conflict. Both planners refuse the plan, and the CLI exits with code `1`. Only the failure reported first can differ.
 
 For a valid channel annotation on a different digest, the command compares the candidate version with the annotated version:
 

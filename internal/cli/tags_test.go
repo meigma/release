@@ -101,6 +101,79 @@ func TestPlanTagsMalformedValuesAreUsage(t *testing.T) {
 	}
 }
 
+func TestPlanTagsJSONConfigFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "malformed digest",
+			args: []string{
+				"plan",
+				"tags",
+				"--json",
+				"--image",
+				tagsImage,
+				"--version",
+				"1.2.3",
+				"--digest",
+				"not-a-digest",
+			},
+			want: "digest",
+		},
+		{
+			name: "malformed version",
+			args: []string{
+				"plan",
+				"tags",
+				"--json",
+				"--image",
+				tagsImage,
+				"--version",
+				"v1.2.3",
+				"--digest",
+				tagsDigest,
+			},
+			want: "v prefix",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			called := false
+			stdout, err := executeTagsFactory(
+				t,
+				nil,
+				tt.args,
+				func(cli.RegistryCredentials) (puboci.StateReader, error) {
+					called = true
+					return unusedReader(t), nil
+				},
+			)
+			require.Error(t, err)
+			assert.Equal(t, 2, cli.ExitCode(err))
+			assert.False(t, called)
+			assert.Equal(t, 1, countJSONDocuments(stdout))
+
+			var envelope cli.Envelope
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout)), &envelope))
+			assert.Equal(t, "plan tags", envelope.Command)
+			assert.False(t, envelope.OK)
+
+			raw, marshalErr := json.Marshal(envelope.Result)
+			require.NoError(t, marshalErr)
+			var result cli.ErrorResult
+			require.NoError(t, json.Unmarshal(raw, &result))
+			assert.Contains(t, result.Error, tt.want)
+		})
+	}
+}
+
 func TestPlanTagsDerivedDefaults(t *testing.T) {
 	t.Parallel()
 

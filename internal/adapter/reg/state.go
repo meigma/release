@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"syscall"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
@@ -103,7 +106,21 @@ func classify(err error) error {
 		return fmt.Errorf("%w: request deadline exceeded", context.DeadlineExceeded)
 	}
 	if errors.Is(err, errdef.ErrNotFound) {
-		return fmt.Errorf("%w", puboci.ErrTagAbsent)
+		return puboci.ErrTagAbsent
+	}
+
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		cause := error(urlErr)
+		if urlErr.Err != nil {
+			cause = urlErr.Err
+		}
+
+		return fmt.Errorf("%w: %s", puboci.ErrRetryable, transportReason(cause))
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return fmt.Errorf("%w: %s", puboci.ErrRetryable, transportReason(netErr))
 	}
 
 	var respErr *errcode.ErrorResponse
@@ -113,7 +130,7 @@ func classify(err error) error {
 
 	switch code := respErr.StatusCode; {
 	case code == http.StatusNotFound:
-		return fmt.Errorf("%w", puboci.ErrTagAbsent)
+		return puboci.ErrTagAbsent
 	case code == http.StatusUnauthorized || code == http.StatusForbidden:
 		return fmt.Errorf("registry authentication failed: status %d", code)
 	case code == http.StatusTooManyRequests || code >= http.StatusInternalServerError:
@@ -121,6 +138,19 @@ func classify(err error) error {
 	default:
 		return fmt.Errorf("registry request failed: status %d", code)
 	}
+}
+
+// transportReason returns a short, URL-free description of a transport failure.
+func transportReason(err error) string {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "i/o timeout"
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "connection refused"
+	}
+
+	return "transport error"
 }
 
 // decodeVersion reads an OCI manifest's version annotation from body.

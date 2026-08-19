@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/meigma/release/internal/rel"
 	"github.com/meigma/release/internal/stage/puboci"
@@ -41,7 +43,7 @@ func TestResolveReturnsManifestDigest(t *testing.T) {
 
 	server := newRegistryServer(t)
 	body := indexJSON(t, map[string]string{ocispec.AnnotationVersion: testVersion})
-	putManifest(t, server, testRepo, testTag, ocispec.MediaTypeImageIndex, body)
+	putManifest(t, server, ocispec.MediaTypeImageIndex, body)
 
 	got, err := newPlainClient(server).Resolve(context.Background(), mustRef(t, server))
 	require.NoError(t, err)
@@ -63,7 +65,7 @@ func TestVersionReadsAnnotation(t *testing.T) {
 
 	server := newRegistryServer(t)
 	body := indexJSON(t, map[string]string{ocispec.AnnotationVersion: testVersion})
-	putManifest(t, server, testRepo, testTag, ocispec.MediaTypeImageIndex, body)
+	putManifest(t, server, ocispec.MediaTypeImageIndex, body)
 
 	got, err := newPlainClient(server).Version(context.Background(), mustRef(t, server))
 	require.NoError(t, err)
@@ -115,7 +117,7 @@ func TestVersionWrapsCorruptManifests(t *testing.T) {
 			t.Parallel()
 
 			server := newRegistryServer(t)
-			putManifest(t, server, testRepo, testTag, test.contentType, test.body)
+			putManifest(t, server, test.contentType, test.body)
 
 			_, err := newPlainClient(server).Version(context.Background(), mustRef(t, server))
 			require.Error(t, err)
@@ -215,6 +217,62 @@ func TestClientFormatOmitsToken(t *testing.T) {
 	}})
 	assert.NotContains(t, fmt.Sprintf("%v", client), testToken)
 	assert.NotContains(t, fmt.Sprintf("%+v", client), testToken)
+	assert.NotContains(t, fmt.Sprintf("%+v", *client), testToken)
+	assert.NotContains(t, fmt.Sprintf("%#v", client), testToken)
+}
+
+func TestResolveRetriesTransientStatus(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+	backend := registry.New()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut && hits.Add(1) == 1 {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+
+			return
+		}
+		backend.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(server.Close)
+
+	body := indexJSON(t, map[string]string{ocispec.AnnotationVersion: testVersion})
+	putManifest(t, server, ocispec.MediaTypeImageIndex, body)
+
+	client := New(Options{
+		PlainHTTP: true,
+		HTTPClient: &http.Client{
+			Transport: retry.NewTransport(server.Client().Transport),
+		},
+	})
+	got, err := client.Resolve(context.Background(), mustRef(t, server))
+	require.NoError(t, err)
+	assert.Equal(t, digestOf(body), got.String())
+	assert.GreaterOrEqual(t, hits.Load(), int32(2))
+}
+
+func TestResolveUnreachableWrapsErrRetryable(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	serverURL := "http://" + address
+	parsed, err := url.Parse(serverURL)
+	require.NoError(t, err)
+	image, err := puboci.ParseImage(parsed.Host + "/" + testRepo)
+	require.NoError(t, err)
+	tag, err := rel.ParseTag(testTag)
+	require.NoError(t, err)
+
+	client := New(Options{PlainHTTP: true})
+	_, resolveErr := client.Resolve(context.Background(), image.Reference(tag))
+	require.Error(t, resolveErr)
+	require.ErrorIs(t, resolveErr, puboci.ErrRetryable)
+	assert.NotContains(t, resolveErr.Error(), serverURL)
+	assert.NotContains(t, resolveErr.Error(), address)
 }
 
 // newRegistryServer starts an in-process OCI registry.
@@ -235,13 +293,13 @@ func newPlainClient(server *httptest.Server) *Client {
 	})
 }
 
-// putManifest writes body as a tagged manifest on the fake registry.
-func putManifest(t *testing.T, server *httptest.Server, repo, tag, contentType string, body []byte) {
+// putManifest writes body as the testTag manifest for testRepo on the fake registry.
+func putManifest(t *testing.T, server *httptest.Server, contentType string, body []byte) {
 	t.Helper()
 
 	req, err := http.NewRequest(
 		http.MethodPut,
-		server.URL+"/v2/"+repo+"/manifests/"+tag,
+		server.URL+"/v2/"+testRepo+"/manifests/"+testTag,
 		bytes.NewReader(body),
 	)
 	require.NoError(t, err)

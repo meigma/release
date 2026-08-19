@@ -4,6 +4,6 @@
 // [LookupEnv] seam. The tree exposes stage, plan tags, verify handoff, and
 // version. Flags override RELEASE_* environment variables via
 // [cobra.Flag.Changed]; there is no config file. ExitCode maps errors onto
-// the process contract: 0 success, 1 verification failure, 2 usage or
-// configuration error.
+// the process contract: 0 success, 1 a release-contract, verification, or
+// command failure, 2 usage or configuration error.
 package cli

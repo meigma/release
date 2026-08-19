@@ -282,11 +282,6 @@ func TestPlanTags(t *testing.T) {
 			t.Parallel()
 
 			got, err := PlanTags(test.version, test.digest, test.state)
-			if test.name == "empty digest" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "digest is empty")
-				return
-			}
 			if test.wantErr != nil {
 				require.ErrorIs(t, err, test.wantErr)
 				return
@@ -309,7 +304,7 @@ func TestPlanTagsRejectsEmptyDigest(t *testing.T) {
 	assert.Contains(t, err.Error(), "digest is empty")
 }
 
-func TestTagPlanApplyAllocatesOnce(t *testing.T) {
+func TestTagPlanApplySelectsCreateDecisions(t *testing.T) {
 	t.Parallel()
 
 	plan := TagPlan{
