@@ -271,10 +271,10 @@ type Actions interface {
     AppendSummary(r io.Reader) error
 }
 
-func VerifyHandoff(ctx context.Context, meta ArtifactMeta, expected Handoff) (ArtifactMetadata, error)
+func VerifyHandoff(ctx context.Context, meta ArtifactMeta, expected Handoff, sleep SleepFunc) (ArtifactMetadata, error)
 ```
 
-`ArtifactID`, `RunID`, `ArtifactDigest`, `Repository`, `Handoff`, and `ArtifactMetadata` validate positive safe IDs, normalized SHA-256, same-run ownership, and expiry. `ghact.New` accepts an already-authenticated go-github client so raw token text never enters domain output/error formatting.
+`ArtifactID`, `RunID`, `ArtifactDigest`, `Repository`, `Handoff`, and `ArtifactMetadata` validate positive safe IDs, normalized SHA-256, same-run ownership, and expiry. **Signature drift reconciled during PR 2:** `VerifyHandoff` takes an injected `SleepFunc` because the bounded retry that preserves the replaced scripts' `retries: 3` lives in the engine, and `internal/clock` is prohibited. Note the consequence for later slices: retry lives in `pubgh`, not `ghact`, so a future direct caller of `ghact.Client.Get` gets no retry. The Actions port (`cli.Actions`/`actenv`) was **removed** from PR 2 for lack of a production caller; it returns with the first CLI-produced output. `ghact.New` accepts an already-authenticated go-github client so raw token text never enters domain output/error formatting.
 
 #### Behavior preserved
 
