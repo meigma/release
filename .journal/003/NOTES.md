@@ -449,3 +449,26 @@ Slices 1-4 are done or in review. Remaining: PR 8 (`image build`), PR 9
 PR 11 (the documentation pin that closes the program). PR 8 needs the
 first persisted artifact-local projection — the `oci-build-inputs`
 trigger from the plan's deferred list finally fires there.
+
+## 2026-08-19 14:10 — Close
+
+PR #14 squash-merged as `df077f9`; branch and worktree removed and the local
+`main` fast-forwarded. All five session PRs are merged:
+
+- #10 `de75a92` — `plan tags`, `internal/rel`, `StateReader`, `reg` read path
+- #11 `257ac5f` — `publish oci prepare`, `ContentPusher`/`Signer`, cosign adapter
+- #12 `3a649f0` — `publish oci finalize`, `TagCommitter`, two-phase cutover
+- #13 `6930882` — `verify bundle`, `BlobVerifier`, cosign verify adapter
+- #14 `df077f9` — `publish github`, four ports, `ghrel`/`ghup`/`gitx`, cutover
+
+Handoff state: ten of thirteen ports built; both publication workflows are thin
+shells around the CLI; PRs 8-11 remain (`image build`, `image verify`, the
+GoReleaser move into `goprof`, and the documentation pin). The next tag in this
+repository is the first end-to-end CI proof of the two-phase OCI path and the
+release path running together — `publish-image: false` and
+`publish-release: false` are the documented rollbacks.
+
+`SUMMARY.md` written, `INDEX.md` row set to complete, and `TECH_NOTES.md`
+rewritten for the new program state, port inventory, escape hatches, platform
+facts, and the local verification recipes (registry harness, scratch GHCR
+packages, throwaway draft releases).
