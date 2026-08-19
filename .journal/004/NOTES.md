@@ -138,3 +138,46 @@ next; it deletes the YAML oracle this PR deliberately kept.
 CI on PR #15 was queued when this entry was written; the parent gate had already
 run the same checks locally.
 
+## 2026-08-19 16:25 — Correction: the adapter flake was ETXTBSY, not load
+
+PR #15's first CI run failed: `TestBuildCanceledContextReturnsPromptly` in
+`internal/adapter/melange` burned the full 30s start wait because the fake
+never started. The earlier entry's "load-sensitive" diagnosis was a
+symptom-level read. Correcting it here.
+
+Real cause: every exec-adapter test wrote its POSIX shell fake into its own
+`t.TempDir()` with `os.WriteFile(..., 0o755)` and exec'd it immediately. On
+Linux a parallel sibling's `fork/exec` inherits the still-open write descriptor,
+so exec'ing that file fails with `ETXTBSY` ("text file busy"). macOS never
+reproduces it, which is why the program has been mislabeling it as flakiness
+since the first exec adapter landed.
+
+How it was proven, after `go test ./internal/adapter/melange` passed in
+isolation twice: run the whole suite on Linux.
+`docker run --rm --cpus 4 -v <worktree>:/src -w /src -e GOFLAGS=-mod=mod
+golang:1.26 go test ./... -count=1` reproduced it on the first try —
+`melange compile: fork/exec /tmp/TestBuildStopsAfterCompileFailure.../melange:
+text file busy` — and a second run hit `cosign` the same way. Different test,
+same file-write-then-exec race.
+
+Fix (`6ad3935`): `TestMain` writes each package's fake exactly once into an
+`os.MkdirTemp` directory before `m.Run()`; helpers return that shared path.
+Per-test `t.TempDir()` still holds argv records, start markers, stderr fixtures,
+and working directories. `gochecknoglobals` joined the existing `_test.go`
+exclusion list because the shared fixture path must be package scoped; the rule
+still covers production code. The `startWait` split from the earlier round stays
+as defense in depth, but it was never the fix.
+
+Verified: four independent Linux full-suite container runs with zero failures
+and zero `text file busy`, `mise exec -- go test ./internal/adapter/... -count=2`
+green, `moon run root:check` green, and **PR #15 CI now passes** (run
+32312135030, 31s).
+
+Lesson for the summary: a test that only fails on the other operating system is
+not flaky, it is failing. Reproduce it in that OS before believing a timing
+story. A containerized `go test ./...` is cheap and would have caught this three
+slices ago.
+
+PR #15 is awaiting human review; nothing is merged.
+
+
