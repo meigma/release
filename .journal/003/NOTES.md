@@ -238,3 +238,72 @@ real I/O boundary. Run the binary against a real server.
   ordering is exact, minor, major, latest.
 - `--plain-http` plus the local registry harness is now the way to smoke
   a registry-touching command without GHCR.
+
+## 2026-08-19 11:10 — PR 4 merged, PR 5 open: meigma/release#12
+
+PR #11 merged as `257ac5f`. PR 5 (`feat(oci): finalize trusted image
+tags`) is open as #12 on `feat/release-cli-slice3c`, two commits
+(`f694aea`, `4dd6a75`), `moon run root:check` green, both PR checks pass.
+Not merged — a human accepts.
+
+This is the cutover: the publisher workflow no longer publishes, signs,
+or tags. ORAS is gone from the toolchain, the four github-script
+publication blocks are deleted, and the job is now prepare → three
+`actions/attest` steps → finalize. Inputs, the six outputs, permissions,
+concurrency, timeouts, and SHA pins are untouched, so the caller-ceiling
+audit is a no-op this time.
+
+### Live GHCR rehearsal (scratch packages, since deleted)
+
+With a recording cosign stub and a real token:
+
+- prepare pushed content and left `tags: null`; finalize applied
+  `0.0.1`, `0.0`, `0`, `latest`, and each resolved to the index digest.
+- publishing `0.0.2` moved every channel; republishing the older `0.0.1`
+  returned `accepted:[0.0.1] retained:[0.0,0,latest]` and left the tag map
+  on `0.0.2`. Invariants 11 and 12 proven against real GHCR, not a fake.
+- A fixture whose index annotation said `1.4.0` while I published it as
+  `0.0.1` was refused: `channel 0.0 points outside its minor release
+  line`. My fixture was wrong and the planner caught it. **Operational
+  fact worth keeping: the image's `org.opencontainers.image.version`
+  annotation must equal the release version, or channel planning refuses.
+  apko stamps that annotation; the workflow derives the version from the
+  tag. They must agree.**
+- Cleanup: both scratch packages deleted via `gh api -X DELETE
+  /orgs/meigma/packages/container/<name>` (the token has
+  `delete:packages`, unlike session 001/002's).
+
+Still only provable in Actions: keyless Cosign signing and the three
+attest steps. Spike B covered them on real GHCR; the first tag after this
+merge is the end-to-end proof, and `publish-image: false` is the
+documented rollback.
+
+### Review round 1
+
+`Reviewer-3` withheld acceptance on one correctness finding, and it was a
+good one: the drift convergence exception accepted ANY tag that now sat
+on the candidate digest, justified in the docs as "our own partial
+progress". But a channel the plan chose to **retain** (it pointed at a
+newer release) can never be our own work — if something else moved it
+onto our digest during the attestation window, finalize converged and
+reported `accepted`, masking a channel regression. `rel.PlanTags`
+short-circuits on the digest match before the monotonicity check, so
+nothing downstream caught it either. The exception is now scoped to tags
+whose prepared observation implies a create decision.
+
+Also fixed: the finalize stdin decode was unbounded (the envelope's
+`result` is a `json.RawMessage`, so the inner 4 MiB limit never applied);
+`Commit` undercounted applied tags when a write landed but its
+verification read failed; the credential-scrub step could fail the whole
+job — and thereby a successful publication — while leaving the credential
+in place; and four test gaps the plan explicitly names, including the
+ambiguous-write case and a full prepare→finalize pass over the in-memory
+registry.
+
+### Harness lesson
+
+`golangci-lint` silently stopped excluding generated files and flagged
+every mock, because its cache still referenced a deleted worktree
+(`.wt/feat-release-cli-slice3b`) and the exclusion stage failed to read
+those paths. `golangci-lint cache clean` fixed it. After removing a
+worktree, clear the lint cache before trusting a lint failure.
