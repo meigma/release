@@ -168,3 +168,73 @@ Also adding `--plain-http` to the CLI: PLAN.md's own PR-4 verification
 asks for an in-memory-registry CLI smoke, which is impossible over HTTPS.
 Explicit flag, documented as local-registry only, rather than implicitly
 downgrading loopback.
+
+## 2026-08-19 09:16 — PR 4 open: meigma/release#11
+
+Branch `feat/release-cli-slice3b`, two commits (`6ea5304` implementation,
+`155c93a` hardening). `moon run root:check` green; `ci / ci` and
+`Kusari Inspector` pass. Not merged — a human accepts.
+
+Shipped: `puboci` layout reader + `Prepare` + `ContentPusher`/`Signer`
+ports + `release.dev/oci-prepare/v1`, oras push half of `reg`, the
+`cosign` exec adapter, and `publish oci prepare [--dry-run]`.
+
+### The smoke test earned its keep
+
+Local harness (kept in `/tmp/pr4-smoke`, not committed): a
+`go-containerregistry` registry binary, a handmade two-platform layout
+(7 blobs, one layer shared so dedup is observable), and a `cosign` stub
+that records argv. First authoritative run failed immediately with
+`file already closed`.
+
+Cause: oras hands the content reader to `net/http`, and the HTTP
+transport **always closes a request body**. A caller-owned `*os.File`
+was therefore closed twice. Every mock and `fstest.MapFS` test passed —
+MapFS's Close is idempotent, so the whole unit suite was blind to it.
+Fix: the adapter wraps content in a `readerOnly` type that hides the
+`io.Closer`; `TestPushBlobLeavesReaderOpen` pins the ownership rule.
+
+Lesson worth carrying: mock-level tests cannot see ownership bugs at a
+real I/O boundary. Run the binary against a real server.
+
+### Review round 1
+
+`Reviewer-2` returned "would not accept" with three blocking findings;
+`Conformance-2` returned 20 PASS / 4 FAIL. All fixed:
+
+- A stray 10.7 MB `release-cli` binary was committed at the repo root
+  (an agent ran `go build ./cmd/release-cli` without `-o`). Removed;
+  `/release-cli` added to `.gitignore`. This is the second time a stray
+  binary reached a commit — check `git status` before every commit.
+- HTTP 409 on a blob push was treated as success. Because verification
+  only resolves manifests, a refused layer upload could produce a signed,
+  `authoritative:true` result for an image with a missing layer. 409 is
+  now an error; `errdef.ErrAlreadyExists` alone means "already present".
+- `RELEASE_DRY_RUN=yes` parsed as `false` and performed a real
+  publication plus signature. `resolveBool` now returns an error and any
+  unparsable boolean is exit 2.
+- `--plain-http` was environment-activatable and host-agnostic while
+  carrying the registry token: any earlier Actions step could append to
+  `$GITHUB_ENV` and downgrade the next run to cleartext. Now flag-only
+  and refused unless the image host is loopback.
+- E3: a streamed body has no `GetBody`, so oras-go's retry transport can
+  never replay it — retry must live where the content can be reopened.
+  The engine now retries `ErrRetryable` pushes and verifications four
+  times (1s/2s/4s) with a reopened stream and an injected sleep.
+- Plus `cmd.WaitDelay` so a cancelled `cosign` cannot hang the CLI
+  (a grandchild holding the stderr pipe blocks `cmd.Wait` forever),
+  a nil-content guard, a required `platform` on every index descriptor
+  (an omitted one produced a `"/"` attestation subject), and tests for
+  the 4 MiB JSON bound, symlink escape, and pushed media types.
+
+### Notes for the next slices
+
+- `oras.CopyGraph` was never used: explicit per-descriptor pushes mirror
+  the YAML and stay deterministic, which sidesteps spike B's concurrency
+  correction entirely.
+- `PrepareInput.Sleep` (a `pubgh`-style `SleepFunc`) is the injected
+  clock seam; finalize should reuse the same shape.
+- Finalize consumes `observed[]` from the result to refuse drift; the
+  ordering is exact, minor, major, latest.
+- `--plain-http` plus the local registry harness is now the way to smoke
+  a registry-touching command without GHCR.
