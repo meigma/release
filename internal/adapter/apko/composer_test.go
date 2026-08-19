@@ -83,7 +83,7 @@ func TestBuildInvokesApkoInOrder(t *testing.T) {
 
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	request := validRequest(t)
 
 	err := New(Options{
@@ -100,7 +100,7 @@ func TestBuildRepeatsArchAndAnnotationFlagsInOrder(t *testing.T) {
 
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	request := validRequest(t)
 	request.Arches = []image.APKArch{image.ArchAArch64, image.ArchX8664}
 	request.Annotations = []image.Annotation{
@@ -125,7 +125,7 @@ func TestBuildStopsAfterLockFailure(t *testing.T) {
 
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	request := validRequest(t)
 
 	err := New(Options{
@@ -150,7 +150,7 @@ func TestBuildNonzeroExitIncludesSubcommandCodeAndStderr(t *testing.T) {
 
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	request := validRequest(t)
 
 	err := New(Options{
@@ -177,7 +177,7 @@ func TestBuildTruncatesLargeStderr(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	head := bytes.Repeat([]byte("H"), stderrTailLimit)
 	tail := bytes.Repeat([]byte("T"), stderrTailLimit)
 	stderrFile := filepath.Join(dir, "stderr.txt")
@@ -204,8 +204,7 @@ func TestBuildResolvesEmptyPath(t *testing.T) {
 	t.Run("finds apko on PATH", func(t *testing.T) {
 		dir := t.TempDir()
 		record := filepath.Join(dir, "args")
-		writeFake(t, dir)
-		t.Setenv("PATH", dir)
+		t.Setenv("PATH", filepath.Dir(fakePath))
 		t.Setenv("APKO_RECORD", record)
 		request := validRequest(t)
 
@@ -235,7 +234,7 @@ func TestBuildCanceledContextReturnsPromptly(t *testing.T) {
 	started := filepath.Join(dir, "started")
 	err := cancelAfterStart(
 		t,
-		writeFake(t, dir),
+		writeFake(t),
 		fakeEnviron(t, "APKO_STARTED="+started, "APKO_SLEEP=30"),
 		started,
 		cancelWait,
@@ -252,7 +251,7 @@ func TestBuildCanceledContextUnblocksOrphanGrandchild(t *testing.T) {
 	started := filepath.Join(dir, "started")
 	err := cancelAfterStart(
 		t,
-		writeFake(t, dir),
+		writeFake(t),
 		fakeEnviron(t, "APKO_STARTED="+started, "APKO_ORPHAN=1", "APKO_SLEEP=30"),
 		started,
 		waitDelay+cancelWait,
@@ -265,8 +264,7 @@ func TestBuildWritesStderrSink(t *testing.T) {
 	skipWindows(t)
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	var sink bytes.Buffer
 
 	err := New(Options{
@@ -284,7 +282,7 @@ func TestBuildRejectsBeforeStart(t *testing.T) {
 
 	dir := t.TempDir()
 	started := filepath.Join(dir, "started")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	environ := fakeEnviron(t, "APKO_STARTED="+started)
 	composer := New(Options{Path: path, Environ: environ})
 	valid := validRequest(t)
@@ -481,15 +479,35 @@ func cancelAfterStart(
 	return nil
 }
 
-// writeFake installs an executable fake apko script in dir.
-func writeFake(t *testing.T, dir string) string {
+// fakePath is the shared fake apko executable. TestMain writes it once
+// because a parallel sibling's fork/exec can inherit an open write
+// descriptor and fail with ETXTBSY on Linux.
+var fakePath string
+
+// TestMain writes the fake apko executable once before any test can
+// exec it. Writing per test races on Linux: a parallel sibling's
+// fork/exec can inherit an open write descriptor and fail with ETXTBSY.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "apko-fake-")
+	if err != nil {
+		panic(err)
+	}
+	path := filepath.Join(dir, defaultBinary)
+	if err := os.WriteFile(path, []byte(fakeApkoScript), 0o755); err != nil {
+		os.RemoveAll(dir)
+		panic(err)
+	}
+	fakePath = path
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// writeFake returns the shared fake apko executable written by TestMain.
+func writeFake(t *testing.T) string {
 	t.Helper()
 
-	path := filepath.Join(dir, defaultBinary)
-	require.NoError(t, os.WriteFile(path, []byte(fakeApkoScript), 0o755))
-	require.NoError(t, os.Chmod(path, 0o755))
-
-	return path
+	return fakePath
 }
 
 // fakeEnviron copies the process environment and appends extra KEY=value pairs.

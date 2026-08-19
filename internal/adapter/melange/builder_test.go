@@ -79,7 +79,7 @@ func TestBuildInvokesMelangeInOrder(t *testing.T) {
 
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 
 	got, err := New(Options{
 		Path:    path,
@@ -99,7 +99,7 @@ func TestBuildCompileUsesFirstSourceArchitecture(t *testing.T) {
 
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	request := validRequest()
 	request.Sources = []image.APKBuildSource{
 		{Arch: image.ArchAArch64, Dir: testSourceARM},
@@ -133,7 +133,7 @@ func TestBuildStopsAfterCompileFailure(t *testing.T) {
 
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 
 	_, err := New(Options{
 		Path: path,
@@ -157,7 +157,7 @@ func TestBuildNonzeroExitIncludesSubcommandCodeAndStderr(t *testing.T) {
 
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 
 	_, err := New(Options{
 		Path: path,
@@ -184,7 +184,7 @@ func TestBuildTruncatesLargeStderr(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	head := bytes.Repeat([]byte("H"), stderrTailLimit)
 	tail := bytes.Repeat([]byte("T"), stderrTailLimit)
 	stderrFile := filepath.Join(dir, "stderr.txt")
@@ -211,8 +211,7 @@ func TestBuildResolvesEmptyPath(t *testing.T) {
 	t.Run("finds melange on PATH", func(t *testing.T) {
 		dir := t.TempDir()
 		record := filepath.Join(dir, "args")
-		writeFake(t, dir)
-		t.Setenv("PATH", dir)
+		t.Setenv("PATH", filepath.Dir(fakePath))
 		t.Setenv("MELANGE_RECORD", record)
 
 		got, err := New(Options{}).Build(context.Background(), validRequest())
@@ -242,7 +241,7 @@ func TestBuildCanceledContextReturnsPromptly(t *testing.T) {
 	started := filepath.Join(dir, "started")
 	err := cancelAfterStart(
 		t,
-		writeFake(t, dir),
+		writeFake(t),
 		fakeEnviron(t, "MELANGE_STARTED="+started, "MELANGE_SLEEP=30"),
 		started,
 		cancelWait,
@@ -259,7 +258,7 @@ func TestBuildCanceledContextUnblocksOrphanGrandchild(t *testing.T) {
 	started := filepath.Join(dir, "started")
 	err := cancelAfterStart(
 		t,
-		writeFake(t, dir),
+		writeFake(t),
 		fakeEnviron(t, "MELANGE_STARTED="+started, "MELANGE_ORPHAN=1", "MELANGE_SLEEP=30"),
 		started,
 		waitDelay+cancelWait,
@@ -272,8 +271,7 @@ func TestBuildWritesStderrSink(t *testing.T) {
 	skipWindows(t)
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	var sink bytes.Buffer
 
 	_, err := New(Options{
@@ -291,7 +289,7 @@ func TestBuildRejectsBeforeStart(t *testing.T) {
 
 	dir := t.TempDir()
 	started := filepath.Join(dir, "started")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	environ := fakeEnviron(t, "MELANGE_STARTED="+started)
 	builder := New(Options{Path: path, Environ: environ})
 	valid := validRequest()
@@ -492,15 +490,35 @@ func cancelAfterStart(
 	return nil
 }
 
-// writeFake installs an executable fake Melange script in dir.
-func writeFake(t *testing.T, dir string) string {
+// fakePath is the shared fake Melange executable. TestMain writes it
+// once because a parallel sibling's fork/exec can inherit an open write
+// descriptor and fail with ETXTBSY on Linux.
+var fakePath string
+
+// TestMain writes the fake Melange executable once before any test can
+// exec it. Writing per test races on Linux: a parallel sibling's
+// fork/exec can inherit an open write descriptor and fail with ETXTBSY.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "melange-fake-")
+	if err != nil {
+		panic(err)
+	}
+	path := filepath.Join(dir, defaultBinary)
+	if err := os.WriteFile(path, []byte(fakeMelangeScript), 0o755); err != nil {
+		os.RemoveAll(dir)
+		panic(err)
+	}
+	fakePath = path
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// writeFake returns the shared fake Melange executable written by TestMain.
+func writeFake(t *testing.T) string {
 	t.Helper()
 
-	path := filepath.Join(dir, defaultBinary)
-	require.NoError(t, os.WriteFile(path, []byte(fakeMelangeScript), 0o755))
-	require.NoError(t, os.Chmod(path, 0o755))
-
-	return path
+	return fakePath
 }
 
 // fakeEnviron copies the process environment and appends extra KEY=value pairs.

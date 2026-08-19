@@ -94,7 +94,7 @@ func TestResolveMalformedSHANamesOutput(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	const garbage = "not-a-commit-sha"
 
 	_, err := New(Options{
@@ -114,7 +114,7 @@ func TestResolveEmptyTagRejectedBeforeStart(t *testing.T) {
 
 	dir := t.TempDir()
 	started := filepath.Join(dir, "started")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 
 	_, err := New(Options{
 		Path:    path,
@@ -134,7 +134,7 @@ func TestResolveCanceledContextReturnsPromptly(t *testing.T) {
 	started := filepath.Join(dir, "started")
 	err := cancelAfterStart(
 		t,
-		writeFake(t, dir),
+		writeFake(t),
 		dir,
 		fakeEnviron(t, "GIT_STARTED="+started, "GIT_SLEEP=30"),
 		started,
@@ -148,7 +148,7 @@ func TestResolveRejectsNilGuardsBeforeStart(t *testing.T) {
 
 	dir := t.TempDir()
 	started := filepath.Join(dir, "started")
-	path := writeFake(t, dir)
+	path := writeFake(t)
 	environ := fakeEnviron(t, "GIT_STARTED="+started)
 	resolver := New(Options{Path: path, Dir: dir, Environ: environ})
 	var nilCtx context.Context
@@ -305,15 +305,35 @@ func cancelAfterStart(
 	return nil
 }
 
-// writeFake installs an executable fake git script in dir.
-func writeFake(t *testing.T, dir string) string {
+// fakePath is the shared fake git executable. TestMain writes it once
+// because a parallel sibling's fork/exec can inherit an open write
+// descriptor and fail with ETXTBSY on Linux.
+var fakePath string
+
+// TestMain writes the fake git executable once before any test can exec
+// it. Writing per test races on Linux: a parallel sibling's fork/exec
+// can inherit an open write descriptor and fail with ETXTBSY.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "gitx-fake-")
+	if err != nil {
+		panic(err)
+	}
+	path := filepath.Join(dir, defaultBinary)
+	if err := os.WriteFile(path, []byte(fakeGitScript), 0o755); err != nil {
+		os.RemoveAll(dir)
+		panic(err)
+	}
+	fakePath = path
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// writeFake returns the shared fake git executable written by TestMain.
+func writeFake(t *testing.T) string {
 	t.Helper()
 
-	path := filepath.Join(dir, defaultBinary)
-	require.NoError(t, os.WriteFile(path, []byte(fakeGitScript), 0o755))
-	require.NoError(t, os.Chmod(path, 0o755))
-
-	return path
+	return fakePath
 }
 
 // fakeEnviron copies the process environment and appends extra KEY=value pairs.
