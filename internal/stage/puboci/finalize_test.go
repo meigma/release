@@ -133,6 +133,7 @@ func TestFinalizeDrift(t *testing.T) {
 	tests := []struct {
 		name    string
 		prepare func(tc *finalizeTest) rel.ChannelState
+		mutate  func(prepared *puboci.OCIPrepareResult)
 		fresh   func(tc *finalizeTest, reader *regmocks.MockStateReader)
 		tag     string
 	}{
@@ -195,6 +196,53 @@ func TestFinalizeDrift(t *testing.T) {
 			},
 			tag: "latest",
 		},
+		{
+			name: "observed latest entry removed",
+			prepare: func(tc *finalizeTest) rel.ChannelState {
+				return emptyState(tc.plan.version)
+			},
+			mutate: func(prepared *puboci.OCIPrepareResult) {
+				prepared.Observed = prepared.Observed[:len(prepared.Observed)-1]
+			},
+			fresh: func(tc *finalizeTest, reader *regmocks.MockStateReader) {
+				expectEmptyRegistry(reader, tc.plan)
+			},
+			tag: "latest",
+		},
+		{
+			name: "exact tag moved off the candidate digest",
+			prepare: func(tc *finalizeTest) rel.ChannelState {
+				return withExact(emptyState(tc.plan.version), rel.TagState{
+					Present: true,
+					Digest:  tc.plan.digest,
+				})
+			},
+			fresh: func(tc *finalizeTest, reader *regmocks.MockStateReader) {
+				expectDigest(reader, tc.plan.exact, tc.plan.other)
+				expectAbsent(reader, tc.plan.minor)
+				expectAbsent(reader, tc.plan.major)
+				expectAbsent(reader, tc.plan.latest)
+			},
+			tag: "1.2.3",
+		},
+		{
+			name: "retained latest moved onto the candidate digest",
+			prepare: func(tc *finalizeTest) rel.ChannelState {
+				return withLatest(emptyState(tc.plan.version), rel.TagState{
+					Present:    true,
+					Digest:     tc.plan.other,
+					HasVersion: true,
+					Version:    rel.Version{Major: 1, Minor: 2, Patch: 4},
+				})
+			},
+			fresh: func(tc *finalizeTest, reader *regmocks.MockStateReader) {
+				expectAbsent(reader, tc.plan.exact)
+				expectAbsent(reader, tc.plan.minor)
+				expectAbsent(reader, tc.plan.major)
+				expectDigest(reader, tc.plan.latest, tc.plan.digest)
+			},
+			tag: "latest",
+		},
 	}
 
 	for _, test := range tests {
@@ -203,6 +251,9 @@ func TestFinalizeDrift(t *testing.T) {
 
 			tc := newFinalizeTest(t)
 			tc.input.Prepared = newFinalizePrepare(t, tc.plan, test.prepare(tc))
+			if test.mutate != nil {
+				test.mutate(&tc.input.Prepared)
+			}
 			test.fresh(tc, tc.reader)
 
 			got, err := puboci.Finalize(context.Background(), tc.input, tc.reader, tc.committer)
@@ -365,6 +416,64 @@ func TestFinalizeRetryableCommitExhausted(t *testing.T) {
 	got, err := puboci.Finalize(context.Background(), tc.input, tc.reader, tc.committer)
 	require.ErrorIs(t, err, puboci.ErrRetryable)
 	assert.Contains(t, err.Error(), "commit tags")
+	assert.Contains(t, err.Error(), "after 4 attempts")
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, waits)
+	assert.Equal(t, puboci.FinalizeResult{}, got)
+}
+
+func TestFinalizeVerificationMismatch(t *testing.T) {
+	t.Parallel()
+
+	tc := newFinalizeTest(t)
+	expectEmptyRegistry(tc.reader, tc.plan)
+	expectCommit(tc, []rel.Tag{"1.2.3", "1.2", "1", "latest"})
+	expectDigest(tc.reader, tc.plan.exact, tc.plan.other)
+
+	got, err := puboci.Finalize(context.Background(), tc.input, tc.reader, tc.committer)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "1.2.3")
+	assert.Contains(t, err.Error(), tc.plan.other.String())
+	assert.Contains(t, err.Error(), tc.plan.digest.String())
+	assert.Equal(t, puboci.FinalizeResult{}, got)
+}
+
+func TestFinalizeRetryableVerifyThenSucceeds(t *testing.T) {
+	t.Parallel()
+
+	tc := newFinalizeTest(t)
+	var waits []time.Duration
+	tc.input.Sleep = recordSleep(&waits)
+	expectEmptyRegistry(tc.reader, tc.plan)
+	expectCommit(tc, []rel.Tag{"1.2.3", "1.2", "1", "latest"})
+	tc.reader.EXPECT().
+		Resolve(mock.Anything, tc.plan.exact).
+		Return(rel.Digest(""), puboci.ErrRetryable).
+		Once()
+	expectDigest(tc.reader, tc.plan.exact, tc.plan.digest)
+	expectVerifyTags(tc.reader, tc.plan, tc.plan.minor, tc.plan.major, tc.plan.latest)
+
+	got, err := puboci.Finalize(context.Background(), tc.input, tc.reader, tc.committer)
+	require.NoError(t, err)
+	assert.Equal(t, wantFinalizeResult(tc, []string{"1.2.3", "1.2", "1", "latest"}, nil, nil), got)
+	assert.Equal(t, []time.Duration{time.Second}, waits)
+}
+
+func TestFinalizeRetryableVerifyExhausted(t *testing.T) {
+	t.Parallel()
+
+	tc := newFinalizeTest(t)
+	var waits []time.Duration
+	tc.input.Sleep = recordSleep(&waits)
+	expectEmptyRegistry(tc.reader, tc.plan)
+	expectCommit(tc, []rel.Tag{"1.2.3", "1.2", "1", "latest"})
+	tc.reader.EXPECT().
+		Resolve(mock.Anything, tc.plan.exact).
+		Return(rel.Digest(""), puboci.ErrRetryable).
+		Times(4)
+
+	got, err := puboci.Finalize(context.Background(), tc.input, tc.reader, tc.committer)
+	require.ErrorIs(t, err, puboci.ErrRetryable)
+	assert.Contains(t, err.Error(), "verify tag")
 	assert.Contains(t, err.Error(), "after 4 attempts")
 	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, waits)
 	assert.Equal(t, puboci.FinalizeResult{}, got)

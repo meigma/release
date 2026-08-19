@@ -55,11 +55,14 @@ type FinalizeInput struct {
 // Authoritative false fails with [ErrNotAuthoritative]. Fresh state is
 // collected through [CollectState]; a serialized plan is never replayed.
 // Each expected tag is compared against [OCIPrepareResult.Observed]. An
-// unchanged observation is accepted. A tag that is now present at the
-// candidate index digest is treated as this publication's own partial
-// progress. Any other change, including a disappeared tag or a tag present
-// in only one set, fails with [ErrStateDrift] and names the tag, the
-// prepared observation, and the fresh one. Tags are then replanned from the
+// unchanged observation is accepted. A tag whose prepared observation
+// implied create (absent, or present at an older in-line version) and that
+// is now present at the candidate index digest is treated as this
+// publication's own partial progress. A prepared retain or accept that
+// later sits on the candidate digest is [ErrStateDrift]. Any other change,
+// including a disappeared tag or a tag present in only one set, fails with
+// [ErrStateDrift] and names the tag, the prepared observation, and the
+// fresh one. Tags are then replanned from the
 // fresh state. [TagCommitter.Commit] is called once with [rel.TagPlan.Apply]
 // and skipped entirely when nothing remains to write. Commit and the
 // postcondition reads retry [ErrRetryable] at most four times with 1s, then
@@ -156,8 +159,8 @@ func validateFinalize(
 //
 // Comparison walks the exact tag and each channel from [rel.ChannelsFor] so
 // the check is ordered and total. A tag present in one set and missing from
-// the other is drift. An unchanged observation is accepted. A tag that is
-// now present at digest is this publication's own partial progress.
+// the other is drift. An unchanged observation is accepted. A tag now at
+// digest is accepted only when the prepared observation implied create.
 func checkFinalizeDrift(
 	observed []TagObservation,
 	current rel.ChannelState,
@@ -185,16 +188,17 @@ func checkFinalizeDrift(
 		if sameObservation(preparedObs, freshState) {
 			continue
 		}
-		if freshState.Present && freshState.Digest == digest {
+		if preparedWouldCreate(preparedObs, version, digest) &&
+			freshState.Present && freshState.Digest == digest {
 			continue
 		}
 
 		return driftError(tag, preparedObs, observeTag(tag, rel.Scope(preparedObs.Scope), freshState))
 	}
 
-	for tag := range prepared {
-		if _, ok := fresh[tag]; !ok {
-			return driftError(tag, prepared[tag], TagObservation{})
+	for _, observation := range observed {
+		if _, ok := fresh[observation.Tag]; !ok {
+			return driftError(observation.Tag, observation, TagObservation{})
 		}
 	}
 
@@ -226,6 +230,46 @@ func sameObservation(prepared TagObservation, fresh rel.TagState) bool {
 	}
 
 	return fresh.HasVersion && prepared.Version == fresh.Version.String()
+}
+
+// preparedWouldCreate reports whether the prepared observation implied create.
+//
+// Absent tags and tags present at an older in-line version would have been
+// written. A prepared accept, retain, corrupt, or out-of-line observation
+// would not, so a later move onto digest is drift rather than convergence.
+func preparedWouldCreate(observation TagObservation, version rel.Version, digest rel.Digest) bool {
+	if !observation.Present {
+		return true
+	}
+	if observation.Digest == digest.String() {
+		return false
+	}
+	if observation.Version == "" {
+		return false
+	}
+	annotated, err := rel.ParseVersion(observation.Version)
+	if err != nil {
+		return false
+	}
+	if !channelInLine(rel.Scope(observation.Scope), version, annotated) {
+		return false
+	}
+
+	return version.Compare(annotated) > 0
+}
+
+// channelInLine reports whether annotated belongs on scope's release line.
+func channelInLine(scope rel.Scope, candidate, annotated rel.Version) bool {
+	switch scope {
+	case rel.ScopeMinor:
+		return annotated.Major == candidate.Major && annotated.Minor == candidate.Minor
+	case rel.ScopeMajor:
+		return annotated.Major == candidate.Major
+	case rel.ScopeLatest, rel.ScopeExact:
+		return true
+	default:
+		return false
+	}
 }
 
 // driftError names the tag, the prepared observation, and the fresh one.

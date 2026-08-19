@@ -21,6 +21,14 @@ const (
 	finalizeCommand = "publish oci finalize"
 	// finalizeLoopbackImage is a loopback repository used to allow --plain-http.
 	finalizeLoopbackImage = "127.0.0.1:5000/owner/repo"
+	// finalizeJSONLimitMiB matches the cli prepare-envelope JSON bound.
+	finalizeJSONLimitMiB = 4
+	// finalizeBytesPerKiB is the number of bytes in a kibibyte.
+	finalizeBytesPerKiB = 1024
+	// finalizeKibibytesPerMiB is the number of kibibytes in a mebibyte.
+	finalizeKibibytesPerMiB = 1024
+	// finalizeJSONLimitBytes is the documented 4 MiB prepare-envelope bound.
+	finalizeJSONLimitBytes int64 = finalizeJSONLimitMiB * finalizeBytesPerKiB * finalizeKibibytesPerMiB
 )
 
 func TestPublishOCIFinalizeJSONSuccess(t *testing.T) {
@@ -146,6 +154,47 @@ func TestPublishOCIFinalizeUsageErrors(t *testing.T) {
 			assertFinalizeFailureEnvelope(t, stdout, tt.want)
 		})
 	}
+}
+
+func TestPublishOCIFinalizeEnvelopeJustUnderJSONLimit(t *testing.T) {
+	t.Parallel()
+
+	image := mustImage(t)
+	ports := mixedFinalizePorts(t, image)
+	stdin := padJSONObject(
+		encodePrepareEnvelope(t, prepareCommand, true, mixedPrepareResult(tagsImage, true)),
+		int(finalizeJSONLimitBytes-1),
+	)
+
+	stdout, stderr, err := executeFinalize(t, nil, stdin, []string{
+		"publish", "oci", "finalize",
+		"--result", "-",
+		"--json",
+	}, ports)
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
+	assert.Equal(t, 1, countJSONDocuments(stdout))
+	assert.Equal(t, []string{"1.2.3", "1.2"}, decodeFinalizeResult(t, stdout).Applied)
+}
+
+func TestPublishOCIFinalizeEnvelopeOverJSONLimit(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	stdin := padJSONObject(
+		encodePrepareEnvelope(t, prepareCommand, true, mixedPrepareResult(tagsImage, true)),
+		int(finalizeJSONLimitBytes+1),
+	)
+	stdout, err := executeFinalizeFactory(t, nil, stdin, []string{
+		"publish", "oci", "finalize",
+		"--result", "-",
+		"--json",
+	}, trackingFinalizeFactories(t, &called))
+	require.Error(t, err)
+	assert.Equal(t, 2, cli.ExitCode(err))
+	assert.False(t, called)
+	assert.Contains(t, err.Error(), "4 MiB")
+	assertFinalizeFailureEnvelope(t, stdout, "4 MiB")
 }
 
 func TestPublishOCIFinalizeNotAuthoritative(t *testing.T) {
@@ -463,6 +512,15 @@ func encodePrepareEnvelope(t *testing.T, command string, ok bool, result any) st
 	require.NoError(t, err)
 
 	return string(payload) + "\n"
+}
+
+// padJSONObject inserts spaces after the opening brace so document is size bytes.
+func padJSONObject(document string, size int) string {
+	if len(document) >= size {
+		return document
+	}
+
+	return "{" + strings.Repeat(" ", size-len(document)) + document[1:]
 }
 
 // decodeFinalizeResult unmarshals the envelope result as [puboci.FinalizeResult].

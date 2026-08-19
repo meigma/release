@@ -340,6 +340,12 @@ jobs:
             exit 0
           fi
           scrubbed="$(mktemp)"
-          jq 'if has("auths") then .auths |= del(."ghcr.io") else . end' \
-            "${config}" >"${scrubbed}"
-          mv "${scrubbed}" "${config}"
+          trap 'rm -f "${scrubbed}"' EXIT
+          # A failed scrub must not leave the credential behind, and must not
+          # fail the last step of an otherwise successful publication.
+          if jq 'if has("auths") then .auths |= del(."ghcr.io") else . end' \
+            "${config}" >"${scrubbed}" && mv "${scrubbed}" "${config}"; then
+            exit 0
+          fi
+          rm -f "${config}"
+          exit 0

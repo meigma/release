@@ -52,9 +52,14 @@ func (c *Client) Commit(
 	}
 
 	for i, tag := range tags {
-		commitErr := commitTag(ctx, repo, desc, digest, tag)
+		written, commitErr := commitTag(ctx, repo, desc, digest, tag)
 		if commitErr != nil {
-			return fmt.Errorf("commit tag %s: applied %d of %d: %w", tag, i, len(tags), commitErr)
+			applied := i
+			if written {
+				applied = i + 1
+			}
+
+			return fmt.Errorf("commit tag %s: applied %d of %d: %w", tag, applied, len(tags), commitErr)
 		}
 	}
 
@@ -62,29 +67,33 @@ func (c *Client) Commit(
 }
 
 // commitTag writes one tag and verifies it resolves to digest.
+//
+// written is true when [remote.Repository.Tag] succeeded, even if the
+// following resolve fails. Callers use that to count a live tag that the
+// next run will reconcile from fresh state.
 func commitTag(
 	ctx context.Context,
 	repo *remote.Repository,
 	desc ocispec.Descriptor,
 	digest rel.Digest,
 	tag rel.Tag,
-) error {
+) (bool, error) {
 	if err := repo.Tag(ctx, desc, tag.String()); err != nil {
-		return classify(err)
+		return false, classify(err)
 	}
 
 	got, err := repo.Resolve(ctx, tag.String())
 	if err != nil {
-		return classify(err)
+		return true, classify(err)
 	}
 
 	resolved, err := rel.ParseDigest(got.Digest.String())
 	if err != nil {
-		return fmt.Errorf("registry digest: %w", err)
+		return true, fmt.Errorf("registry digest: %w", err)
 	}
 	if resolved != digest {
-		return fmt.Errorf("resolved %s, want %s", resolved, digest)
+		return true, fmt.Errorf("resolved %s, want %s", resolved, digest)
 	}
 
-	return nil
+	return true, nil
 }

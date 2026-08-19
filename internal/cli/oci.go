@@ -31,6 +31,20 @@ const (
 	resultStdin = "-"
 	// envCosignPath is the Cosign binary path override.
 	envCosignPath = "RELEASE_COSIGN_PATH"
+	// jsonLimitMiB is the prepare-envelope size bound in mebibytes.
+	//
+	// It matches the unexported puboci JSON bound used by
+	// [puboci.ParsePrepareResult].
+	jsonLimitMiB = 4
+	// jsonBytesPerKiB is the number of bytes in a kibibyte.
+	jsonBytesPerKiB = 1024
+	// jsonKibibytesPerMiB is the number of kibibytes in a mebibyte.
+	jsonKibibytesPerMiB = 1024
+	// jsonLimitBytes is the maximum encoded prepare envelope read from stdin.
+	jsonLimitBytes int64 = jsonLimitMiB * jsonBytesPerKiB * jsonKibibytesPerMiB
+	// jsonLimitReadBytes is one past [jsonLimitBytes] so an oversize
+	// document can be distinguished from a document that fills the bound.
+	jsonLimitReadBytes = jsonLimitBytes + 1
 )
 
 // newPublishCommand constructs the publish parent verb.
@@ -298,18 +312,27 @@ func resolveFinalize(cmd *cobra.Command, options Options) (finalizeConfig, error
 // parsePrepareEnvelope decodes one successful publish-oci-prepare envelope from r.
 //
 // The document must use [Schema], name [commandPrepare], set ok to true, and
-// contain no trailing content. The inner result is parsed with
+// contain no trailing content. Input is bounded to [jsonLimitBytes], matching
+// the puboci JSON bound. The inner result is parsed with
 // [puboci.ParsePrepareResult].
 func parsePrepareEnvelope(r io.Reader) (puboci.OCIPrepareResult, error) {
 	if r == nil {
 		return puboci.OCIPrepareResult{}, errors.New("stdin is empty")
 	}
 
-	decoder := json.NewDecoder(r)
+	limited := &io.LimitedReader{R: r, N: jsonLimitReadBytes}
+	decoder := json.NewDecoder(limited)
 	decoder.DisallowUnknownFields()
 
 	var envelope finalizePrepareEnvelope
-	if err := decoder.Decode(&envelope); err != nil {
+	err := decoder.Decode(&envelope)
+	if limited.N == 0 {
+		return puboci.OCIPrepareResult{}, fmt.Errorf(
+			"prepare envelope exceeds the %d MiB JSON limit",
+			jsonLimitMiB,
+		)
+	}
+	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return puboci.OCIPrepareResult{}, errors.New("stdin is empty")
 		}

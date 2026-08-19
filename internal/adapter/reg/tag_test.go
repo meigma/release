@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/stretchr/testify/assert"
@@ -277,6 +280,101 @@ func TestCommitCanceledBeforeStartWritesNothing(t *testing.T) {
 	assert.NotContains(t, commitErr.Error(), testToken)
 }
 
+func TestCommitCountsWrittenTagWhenVerifyFails(t *testing.T) {
+	t.Parallel()
+
+	backend := registry.New()
+	var failVerify atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPut && strings.HasSuffix(request.URL.Path, "/manifests/1") {
+			backend.ServeHTTP(writer, request)
+			failVerify.Store(true)
+
+			return
+		}
+		if request.Method == http.MethodHead && strings.HasSuffix(request.URL.Path, "/manifests/1") &&
+			failVerify.CompareAndSwap(true, false) {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+
+			return
+		}
+		backend.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newPlainClient(server)
+	image := mustImage(t, server)
+	digest := pushFixture(t, client, image)
+	tags := mustTags(t, "1.4.0", "1.4", "1", "latest")
+
+	err := client.Commit(context.Background(), image, digest, tags)
+	require.Error(t, err)
+	require.ErrorIs(t, err, puboci.ErrRetryable)
+	assert.Contains(t, err.Error(), "commit tag 1:")
+	assert.Contains(t, err.Error(), "applied 3 of 4")
+
+	requireTagsResolveTo(t, client, image, digest, tags[:3])
+	_, latestErr := client.Resolve(context.Background(), image.Reference(tags[3]))
+	require.Error(t, latestErr)
+	require.ErrorIs(t, latestErr, puboci.ErrTagAbsent)
+}
+
+func TestPrepareThenFinalizeAppliesTagsAfterAttestationPoint(t *testing.T) {
+	t.Parallel()
+
+	server := newRegistryServer(t)
+	client := newPlainClient(server)
+	image := mustImage(t, server)
+	fixture := newImageFixture(t)
+	layout := layoutFromFixture(t, fixture)
+	version, err := rel.ParseVersion("1.4.0")
+	require.NoError(t, err)
+	tags := mustTags(t, "1.4.0", "1.4", "1", "latest")
+	signer := &recordingSigner{}
+	input := puboci.PrepareInput{
+		Image:       image,
+		Version:     version,
+		IndexDigest: fixture.index.Digest,
+		Layout:      layout,
+		Sleep:       instantSleep,
+	}
+
+	prepared, err := puboci.Prepare(context.Background(), input, client, client, signer)
+	require.NoError(t, err)
+	require.True(t, prepared.Authoritative)
+	require.NoError(t, client.Verify(context.Background(), image.Pin(fixture.index.Digest)))
+	require.Equal(t, []puboci.DigestRef{image.Pin(fixture.index.Digest)}, signer.refs)
+	requireTagsAbsent(t, client, image, tags)
+
+	finalized, err := puboci.Finalize(
+		context.Background(),
+		puboci.FinalizeInput{Prepared: prepared, Sleep: instantSleep},
+		client,
+		client,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"1.4.0", "1.4", "1", "latest"}, finalized.Applied)
+	assert.Equal(t, []string{}, finalized.Accepted)
+	assert.Equal(t, []string{}, finalized.Retained)
+	requireTagsResolveTo(t, client, image, fixture.index.Digest, tags)
+
+	preparedAgain, err := puboci.Prepare(context.Background(), input, client, client, signer)
+	require.NoError(t, err)
+	require.True(t, preparedAgain.Authoritative)
+
+	finalizedAgain, err := puboci.Finalize(
+		context.Background(),
+		puboci.FinalizeInput{Prepared: preparedAgain, Sleep: instantSleep},
+		client,
+		client,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []string{}, finalizedAgain.Applied)
+	assert.Equal(t, []string{"1.4.0", "1.4", "1", "latest"}, finalizedAgain.Accepted)
+	assert.Equal(t, []string{}, finalizedAgain.Retained)
+	requireTagsResolveTo(t, client, image, fixture.index.Digest, tags)
+}
+
 // pushFixture uploads a one-platform index to image and returns its digest.
 func pushFixture(t *testing.T, client *Client, image puboci.Image) rel.Digest {
 	t.Helper()
@@ -352,4 +450,55 @@ func (t cancelOnTagPUT) RoundTrip(request *http.Request) (*http.Response, error)
 	}
 
 	return t.base.RoundTrip(request)
+}
+
+// requireTagsAbsent asserts none of the tags resolve.
+func requireTagsAbsent(t *testing.T, client *Client, image puboci.Image, tags []rel.Tag) {
+	t.Helper()
+
+	for _, tag := range tags {
+		_, err := client.Resolve(context.Background(), image.Reference(tag))
+		require.Error(t, err, "tag %s", tag)
+		require.ErrorIs(t, err, puboci.ErrTagAbsent, "tag %s", tag)
+	}
+}
+
+// layoutFromFixture builds an extracted oci-image/layout directory from fixture.
+func layoutFromFixture(t *testing.T, fixture imageFixture) fs.FS {
+	t.Helper()
+
+	configPath, err := puboci.BlobPath(fixture.config.Digest)
+	require.NoError(t, err)
+	layerPath, err := puboci.BlobPath(fixture.layer.Digest)
+	require.NoError(t, err)
+	manifestPath, err := puboci.BlobPath(fixture.manifest.Digest)
+	require.NoError(t, err)
+
+	return fstest.MapFS{
+		"oci-layout": {Data: []byte(`{"imageLayoutVersion":"1.0.0"}`)},
+		"index.json": {Data: fixture.indexBytes},
+		configPath:   {Data: fixture.configBytes},
+		layerPath:    {Data: fixture.layerBytes},
+		manifestPath: {Data: fixture.manifestBytes},
+	}
+}
+
+// recordingSigner is a local [puboci.Signer] stub that records signed refs.
+//
+// It is a test double for a port this package does not own.
+type recordingSigner struct {
+	// refs are the digest refs passed to SignRecursive, in call order.
+	refs []puboci.DigestRef
+}
+
+// SignRecursive records ref and succeeds.
+func (s *recordingSigner) SignRecursive(_ context.Context, ref puboci.DigestRef) error {
+	s.refs = append(s.refs, ref)
+
+	return nil
+}
+
+// instantSleep is a [puboci.SleepFunc] that never waits.
+func instantSleep(_ context.Context, _ time.Duration) error {
+	return nil
 }
