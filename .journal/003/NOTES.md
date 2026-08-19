@@ -372,3 +372,80 @@ comments were corrected.
   `Publisher`, `RefResolver` — plus `ghrel`, `ghup`, and `gitx`. That is
   the largest port batch in the program; consider splitting the wave by
   adapter.
+
+## 2026-08-19 14:02 — PR 6 merged, PR 7 open: meigma/release#14
+
+PR #13 merged as `6930882`. PR 7 (`feat(release): publish verified GitHub
+releases`) is open as #14 on `feat/release-cli-slice4b`, two commits
+(`ba527c6`, `3671f82`), `moon run root:check` green, both checks pass.
+Not merged — a human accepts.
+
+Biggest slice so far: four ports (`ReleaseReader`, `AssetReplacer`,
+`Publisher`, `RefResolver` — 6 through 9 of 13), three adapters (`ghrel`,
+`ghup`, `gitx`), `publish github`, and the deletion of the last
+`actions/github-script` publication programs. Seven agents in one wave.
+
+### Contract change decided mid-flight
+
+`PublishEngine` moved the poll loops into the engine, so `FindDraft` and
+`WaitAssets` became single snapshots and the 24×5s / 12×1s budgets live
+on `PublishInput`. That is the better shape — one place decides retry
+policy and the state machine is instant under an injected sleep — but I
+had specified adapter-side polling, so `GhrelAdapter` had already built
+it. Caught it from a broadcast, told both agents, and the dead
+`PollPolicy` parameter lingered for one round before being removed.
+**Lesson: when an agent reports a design improvement, re-broadcast the
+corrected contract immediately; a partially updated interface is worse
+than either version.**
+
+`PublishDocs` also earned its keep by diffing the docs against the landed
+code and finding two engine deviations before review did: digest
+mismatches were being retried by the poll helper, and post-undraft
+failures were not classified indeterminate.
+
+### Live rehearsal against the real repository
+
+Temporary draft releases (`v0.0.0-rehearsal`, `v0.0.0-rehearsal2`),
+deleted afterwards along with their tags; `gh release list` shows only
+`v0.1.0`. Proven end to end with real GitHub, real `gh`, real `git`:
+draft discovery, tag→SHA binding, four-asset upload, digest convergence,
+staying draft under `--no-undraft`, undraft to public, rerun
+convergence, and a wrong `GITHUB_SHA` refused before any mutation.
+
+The best evidence: planting `stray.txt` on the release made the next run
+fail with `release contains an unexpected asset: stray.txt`, **and the
+stray asset was still present afterwards** — refuse-never-delete proven
+against a live release rather than asserted in a mock.
+
+### Review round 1
+
+One blocking finding, and a good one: `--no-undraft` was not enforced on
+the already-published branch. `acceptPublished` never read
+`input.Undraft`, so a public release with a matching asset set returned
+success during a draft-only rehearsal — the workflow would have gone
+green while the release was public, in exactly the direction the flag
+exists to prevent. Now `ErrIndeterminate`, refused before any asset read,
+and verified live.
+
+Second-most valuable: the tag-to-commit binding had moved *after*
+`actions/attest` when it was folded into the CLI. A moved or mis-bound
+tag would have emitted a stray provenance attestation and transparency
+log entry — unwithdrawable — before failing. A three-line bash gate now
+runs right after checkout, and the CLI keeps its authoritative check.
+
+Also fixed: ambiguous `Publisher.Publish` failures now carry
+`ErrIndeterminate` (they may have applied); the CLI prints an operator
+remediation hint for that class, which also gives the sentinel a real
+inspector; the shared retry extraction had silently changed
+`VerifyHandoff`'s error strings, restored with regression tests; the
+documented exit code for an unresolvable `RELEASE_GH_PATH` was wrong
+(1 at first use, not 2); and `ghup`'s inherited-`GH_TOKEN` drop got a
+test.
+
+### Program state
+
+Slices 1-4 are done or in review. Remaining: PR 8 (`image build`), PR 9
+(`image verify`), PR 10 (GoReleaser invocation moves into `goprof`), and
+PR 11 (the documentation pin that closes the program). PR 8 needs the
+first persisted artifact-local projection — the `oci-build-inputs`
+trigger from the plan's deferred list finally fires there.
