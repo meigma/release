@@ -379,7 +379,8 @@ func TestPublishOCIPrepareRegistryConfig(t *testing.T) {
 	t.Parallel()
 
 	layoutDir, layout := writeTwoPlatformLayout(t)
-	image := mustImage(t)
+	image, err := puboci.ParseImage("127.0.0.1:5000/owner/repo")
+	require.NoError(t, err)
 	reader := absentReader(t)
 	pusher := unusedPusher(t)
 	signer := unusedSigner(t)
@@ -395,7 +396,7 @@ func TestPublishOCIPrepareRegistryConfig(t *testing.T) {
 	}, []string{
 		"publish", "oci", "prepare",
 		"--layout", layoutDir,
-		"--image", tagsImage,
+		"--image", "127.0.0.1:5000/owner/repo",
 		"--version", "1.2.3",
 		"--digest", layout.Index.Digest.String(),
 		"--plain-http",
@@ -422,6 +423,113 @@ func TestPublishOCIPrepareRegistryConfig(t *testing.T) {
 	assert.Equal(t, prepareCosignPath, gotPath)
 	assert.NotContains(t, stdout, tagsToken)
 	assert.True(t, decodePrepareResult(t, stdout).Authoritative)
+}
+
+func TestPublishOCIPrepareDryRunEnvYesIsUsage(t *testing.T) {
+	t.Parallel()
+
+	layoutDir, layout := writeTwoPlatformLayout(t)
+	called := false
+	stdout, err := executePrepareFactory(t, map[string]string{
+		"RELEASE_DRY_RUN": "yes",
+	}, []string{
+		"publish", "oci", "prepare",
+		"--layout", layoutDir,
+		"--image", tagsImage,
+		"--version", "1.2.3",
+		"--digest", layout.Index.Digest.String(),
+		"--json",
+	}, trackingPrepareFactories(t, &called))
+	require.Error(t, err)
+	assert.Equal(t, 2, cli.ExitCode(err))
+	assert.False(t, called)
+	assert.Contains(t, err.Error(), "RELEASE_DRY_RUN")
+	assertPrepareFailureEnvelope(t, stdout, "RELEASE_DRY_RUN")
+}
+
+func TestPublishOCIPrepareDryRunEnvTrue(t *testing.T) {
+	t.Parallel()
+
+	layoutDir, layout := writeTwoPlatformLayout(t)
+	readerCalled := false
+	writerCalled := false
+	stdout, err := executePrepareFactory(t, map[string]string{
+		"RELEASE_DRY_RUN": "true",
+	}, []string{
+		"publish", "oci", "prepare",
+		"--layout", layoutDir,
+		"--image", tagsImage,
+		"--version", "1.2.3",
+		"--digest", layout.Index.Digest.String(),
+		"--json",
+	}, prepareFactories{
+		newReader: func(cli.RegistryConfig) (puboci.StateReader, error) {
+			readerCalled = true
+			return absentReader(t), nil
+		},
+		newPusher: func(cli.RegistryConfig) (puboci.ContentPusher, error) {
+			writerCalled = true
+			return unusedPusher(t), nil
+		},
+		newSigner: func(string) (puboci.Signer, error) {
+			writerCalled = true
+			return unusedSigner(t), nil
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, readerCalled)
+	assert.False(t, writerCalled)
+	assert.False(t, decodePrepareResult(t, stdout).Authoritative)
+}
+
+func TestPublishOCIPreparePlainHTTPRefusedForGHCR(t *testing.T) {
+	t.Parallel()
+
+	layoutDir, layout := writeTwoPlatformLayout(t)
+	called := false
+	stdout, err := executePrepareFactory(t, nil, []string{
+		"publish", "oci", "prepare",
+		"--layout", layoutDir,
+		"--image", tagsImage,
+		"--version", "1.2.3",
+		"--digest", layout.Index.Digest.String(),
+		"--plain-http",
+		"--json",
+	}, trackingPrepareFactories(t, &called))
+	require.Error(t, err)
+	assert.Equal(t, 2, cli.ExitCode(err))
+	assert.False(t, called)
+	assert.Contains(t, err.Error(), "--plain-http")
+	assertPrepareFailureEnvelope(t, stdout, "--plain-http")
+}
+
+func TestPublishOCIPrepareSymlinkEscape(t *testing.T) {
+	t.Parallel()
+
+	layoutDir, layout := writeTwoPlatformLayout(t)
+	outside := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o644))
+	blobName, err := puboci.BlobPath(layout.Blobs[0].Digest)
+	require.NoError(t, err)
+	blobPath := filepath.Join(layoutDir, filepath.FromSlash(blobName))
+	require.NoError(t, os.Remove(blobPath))
+	require.NoError(t, os.Symlink(outside, blobPath))
+
+	stdout, _, err := executePrepare(t, nil, []string{
+		"publish", "oci", "prepare",
+		"--layout", layoutDir,
+		"--image", tagsImage,
+		"--version", "1.2.3",
+		"--digest", layout.Index.Digest.String(),
+		"--json",
+	}, preparePorts{
+		reader: unusedReader(t),
+		pusher: unusedPusher(t),
+		signer: unusedSigner(t),
+	})
+	require.Error(t, err)
+	assert.NotEqual(t, 0, cli.ExitCode(err))
+	assert.Equal(t, 1, countJSONDocuments(stdout))
 }
 
 // preparePorts is the injected prepare command ports.

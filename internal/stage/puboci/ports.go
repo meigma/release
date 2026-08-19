@@ -40,7 +40,8 @@ type ContentPusher interface {
 //
 // [Signer.SignRecursive] signs the index at ref and every manifest that
 // index references. Implementations invoke `cosign sign --yes --recursive`
-// against image@digest. Transient failures wrap [ErrRetryable].
+// against image@digest. Sign failures are returned as received; this port
+// does not classify them as [ErrRetryable].
 type Signer interface {
 	// SignRecursive signs ref and every referenced platform manifest.
 	//

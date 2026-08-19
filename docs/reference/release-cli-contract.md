@@ -7,12 +7,14 @@
 | Command | Purpose |
 | --- | --- |
 | `release-cli stage --profile go --dist PATH [--json]` | Validate the staged Go release files under `PATH`. |
-| `release-cli plan tags [--image IMAGE] [--version VERSION] --digest DIGEST [--json]` | Inspect the immutable exact tag and moving channel tags for an OCI release. |
+| `release-cli plan tags [--image IMAGE] [--version VERSION] --digest DIGEST [--plain-http] [--json]` | Inspect the immutable exact tag and moving channel tags for an OCI release. |
 | `release-cli publish oci prepare --layout PATH [--image IMAGE] [--version VERSION] --digest DIGEST [--dry-run] [--plain-http] [--json]` | Validate and prepare a digest-addressed OCI image publication and recursive signature. |
 | `release-cli verify handoff --artifact-id <n> --digest <sha256:...> [--json]` | Verify an Actions artifact's GitHub API metadata before download. |
 | `release-cli version [--json]` | Report the CLI version, source commit, and protocol integer. |
 
 `--dist` is required for `stage`. The only accepted profile is `go`. `verify handoff` requires artifact ID and digest values. Supply them with `--artifact-id` and `--digest`, or with `RELEASE_ARTIFACT_ID` and `RELEASE_DIGEST`. An explicitly set flag takes precedence over its environment variable.
+
+Boolean `RELEASE_*` environment variables must contain a value accepted by Go's `strconv.ParseBool`: `1`, `t`, `T`, `TRUE`, `true`, `True`, `0`, `f`, `F`, `FALSE`, `false`, or `False`. Any other value is invalid configuration and exits with code `2`.
 
 The artifact ID must be a positive decimal safe integer. The digest must be a 64-digit hexadecimal SHA-256 value with or without the `sha256:` prefix. Digest hex is case-insensitive and is normalized to lowercase with the prefix.
 
@@ -194,9 +196,12 @@ No other exit code is defined; in particular, code `3` has no meaning. An exit c
 | Image | `--image` | `RELEASE_IMAGE` | `ghcr.io/<owner>/<repo>`, lowercased from `GITHUB_REPOSITORY`. |
 | Version | `--version` | `RELEASE_VERSION` | `GITHUB_REF_NAME` with one optional leading `v` stripped. |
 | Digest | `--digest` | `RELEASE_DIGEST` | None. A digest is required. |
+| Plain HTTP | `--plain-http` | None. The option is flag-only. | Disabled. |
 | JSON output | `--json` | `RELEASE_JSON` | Disabled. |
 
 An explicitly set flag takes precedence over its environment variable. The derived default applies only when the corresponding flag and release environment variable are absent. The image must have the lowercase form `host/path[/path...]` without a tag or digest. The digest must have the `sha256:` prefix followed by 64 hexadecimal digits.
+
+`--plain-http` permits an HTTP registry connection for local-registry testing only. The command refuses this flag unless the image host is `127.0.0.1`, `::1`, or `localhost`, optionally with a port. Any other host is invalid configuration and exits with code `2`.
 
 The command resolves registry credentials in this order:
 
@@ -264,12 +269,12 @@ The publisher workflow serializes tag planning and application with a repository
 | Version | `--version` | `RELEASE_VERSION` | `GITHUB_REF_NAME` with one optional leading `v` stripped. |
 | Expected index digest | `--digest` | `RELEASE_DIGEST` | None. A digest is required. |
 | Dry run | `--dry-run` | `RELEASE_DRY_RUN` | Disabled. |
-| Plain HTTP | `--plain-http` | `RELEASE_PLAIN_HTTP` | Disabled. |
+| Plain HTTP | `--plain-http` | None. The option is flag-only. | Disabled. |
 | JSON output | `--json` | `RELEASE_JSON` | Disabled. |
 
 `--layout` identifies the extracted `oci-image/layout` directory. An explicitly set flag takes precedence over its environment variable. The derived image or version default applies only when the corresponding flag and release environment variable are absent. Image, version, and digest validation is the same as for `plan tags`.
 
-`--plain-http` permits an HTTP registry connection for local-registry testing only. Never use it for a real publication.
+`--plain-http` permits an HTTP registry connection for local-registry testing only. The command refuses this flag unless the image host is `127.0.0.1`, `::1`, or `localhost`, optionally with a port. Any other host is invalid configuration and exits with code `2`. Never use plain HTTP for a real publication.
 
 Registry credentials use the same token and username resolution as `plan tags`. The command keeps these credentials in memory and does not write a Docker configuration file.
 

@@ -37,6 +37,11 @@ if [ -n "${COSIGN_STDERR_FILE:-}" ]; then
 elif [ -n "${COSIGN_STDERR:-}" ]; then
 	printf '%s' "$COSIGN_STDERR" >&2
 fi
+if [ -n "${COSIGN_ORPHAN:-}" ]; then
+	sleep "${COSIGN_SLEEP:-30}" &
+	wait
+	exit "${COSIGN_EXIT:-0}"
+fi
 if [ -n "${COSIGN_SLEEP:-}" ]; then
 	exec sleep "$COSIGN_SLEEP"
 fi
@@ -135,33 +140,32 @@ func TestSignRecursiveCanceledContextReturnsPromptly(t *testing.T) {
 
 	dir := t.TempDir()
 	started := filepath.Join(dir, "started")
-	path := writeFake(t, dir)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	environ := fakeEnviron(t, "COSIGN_STARTED="+started, "COSIGN_SLEEP=30")
-	ref := mustRef(t)
+	err := cancelAfterStart(
+		t,
+		writeFake(t, dir),
+		fakeEnviron(t, "COSIGN_STARTED="+started, "COSIGN_SLEEP=30"),
+		started,
+		cancelWait,
+	)
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+}
 
-	done := make(chan error, 1)
-	start := time.Now()
-	go func() {
-		done <- New(Options{Path: path, Environ: environ}).SignRecursive(ctx, ref)
-	}()
+func TestSignRecursiveCanceledContextUnblocksOrphanGrandchild(t *testing.T) {
+	skipWindows(t)
+	t.Parallel()
 
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(started)
-
-		return err == nil
-	}, cancelWait, cancelPoll)
-	cancel()
-
-	select {
-	case err := <-done:
-		require.Error(t, err)
-		require.ErrorIs(t, err, context.Canceled)
-		assert.Less(t, time.Since(start), cancelWait)
-	case <-time.After(cancelWait):
-		t.Fatal("SignRecursive did not return after cancel")
-	}
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	err := cancelAfterStart(
+		t,
+		writeFake(t, dir),
+		fakeEnviron(t, "COSIGN_STARTED="+started, "COSIGN_ORPHAN=1", "COSIGN_SLEEP=30"),
+		started,
+		waitDelay+cancelWait,
+	)
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestSignRecursiveWritesStderrSink(t *testing.T) {
@@ -254,6 +258,42 @@ func skipWindows(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix shell fixture")
 	}
+}
+
+// cancelAfterStart runs SignRecursive, cancels after the fake starts, and
+// returns the call error. It fails the test if the call exceeds bound.
+func cancelAfterStart(
+	t *testing.T,
+	path string,
+	environ []string,
+	started string,
+	bound time.Duration,
+) error {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ref := mustRef(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- New(Options{Path: path, Environ: environ}).SignRecursive(ctx, ref)
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(started)
+
+		return err == nil
+	}, bound, cancelPoll)
+	cancel()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(bound):
+		t.Fatalf("SignRecursive did not return within %s after cancel", bound)
+	}
+
+	return nil
 }
 
 // writeFake installs an executable fake cosign script in dir.

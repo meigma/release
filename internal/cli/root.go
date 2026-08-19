@@ -31,8 +31,6 @@ const (
 	envLayout = "RELEASE_LAYOUT"
 	// envDryRun is the environment variable for --dry-run.
 	envDryRun = "RELEASE_DRY_RUN"
-	// envPlainHTTP is the environment variable for --plain-http.
-	envPlainHTTP = "RELEASE_PLAIN_HTTP"
 )
 
 // LookupEnv looks up an environment variable.
@@ -62,10 +60,12 @@ type Settings struct {
 	Layout string
 	// DryRun reports whether --dry-run / RELEASE_DRY_RUN requested a dry run.
 	DryRun bool
-	// PlainHTTP reports whether --plain-http / RELEASE_PLAIN_HTTP requested HTTP.
+	// PlainHTTP reports whether --plain-http requested HTTP.
 	PlainHTTP bool
 	// JSON reports whether --json / RELEASE_JSON requested structured output.
 	JSON bool
+	// err is a flag or environment parse failure discovered while resolving settings.
+	err error
 }
 
 // BuildInfo describes linker-injected build metadata.
@@ -198,7 +198,7 @@ func (options Options) withDefaults() Options {
 
 // resolveSettings applies flag-over-env precedence for the executing command.
 func resolveSettings(cmd *cobra.Command, lookup LookupEnv) Settings {
-	return Settings{
+	settings := Settings{
 		Profile:    resolveString(cmd, flagProfile, envProfile, lookup),
 		Dist:       resolveString(cmd, flagDist, envDist, lookup),
 		ArtifactID: resolveString(cmd, flagArtifactID, envArtifactID, lookup),
@@ -206,10 +206,24 @@ func resolveSettings(cmd *cobra.Command, lookup LookupEnv) Settings {
 		Version:    resolveString(cmd, flagVersion, envVersion, lookup),
 		Digest:     resolveString(cmd, flagDigest, envDigest, lookup),
 		Layout:     resolveString(cmd, flagLayout, envLayout, lookup),
-		DryRun:     resolveBool(cmd, flagDryRun, envDryRun, lookup),
-		PlainHTTP:  resolveBool(cmd, flagPlainHTTP, envPlainHTTP, lookup),
-		JSON:       resolveBool(cmd, "json", envJSON, lookup),
+		PlainHTTP:  resolveFlagBool(cmd, flagPlainHTTP),
 	}
+	dryRun, err := resolveBool(cmd, flagDryRun, envDryRun, lookup)
+	if err != nil {
+		settings.err = fmt.Errorf("%s: %w", envDryRun, err)
+	} else {
+		settings.DryRun = dryRun
+	}
+	jsonOut, err := resolveBool(cmd, "json", envJSON, lookup)
+	if err != nil {
+		if settings.err == nil {
+			settings.err = fmt.Errorf("%s: %w", envJSON, err)
+		}
+	} else {
+		settings.JSON = jsonOut
+	}
+
+	return settings
 }
 
 // resolveString returns the flag value when the flag was set, otherwise the
@@ -230,17 +244,39 @@ func resolveString(cmd *cobra.Command, flagName, envName string, lookup LookupEn
 
 // resolveBool returns the flag value when the flag was set, otherwise the
 // named environment variable parsed as a bool, otherwise false.
-func resolveBool(cmd *cobra.Command, flagName, envName string, lookup LookupEnv) bool {
+//
+// An unparsable environment value is an error. [strconv.ParseBool] does not
+// accept yes, on, y, or enabled.
+func resolveBool(cmd *cobra.Command, flagName, envName string, lookup LookupEnv) (bool, error) {
 	if flag := cmd.Flags().Lookup(flagName); flag != nil && flag.Changed {
 		value, err := strconv.ParseBool(flag.Value.String())
-		return err == nil && value
+		if err != nil {
+			return false, err
+		}
+
+		return value, nil
 	}
 	if raw, ok := lookup(envName); ok {
 		value, err := strconv.ParseBool(raw)
-		return err == nil && value
+		if err != nil {
+			return false, err
+		}
+
+		return value, nil
 	}
 
-	return false
+	return false, nil
+}
+
+// resolveFlagBool returns the named flag when it was set, otherwise false.
+func resolveFlagBool(cmd *cobra.Command, flagName string) bool {
+	flag := cmd.Flags().Lookup(flagName)
+	if flag == nil || !flag.Changed {
+		return false
+	}
+	value, err := strconv.ParseBool(flag.Value.String())
+
+	return err == nil && value
 }
 
 // usageNoArgs rejects positional arguments as a usage error.

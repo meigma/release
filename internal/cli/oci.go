@@ -150,6 +150,9 @@ func resolvePrepare(options Options) (prepareConfig, error) {
 	if options.settings != nil {
 		settings = *options.settings
 	}
+	if err := settings.err; err != nil {
+		return prepareConfig{}, err
+	}
 	if settings.Layout == "" {
 		return prepareConfig{}, fmt.Errorf("--%s is required", flagLayout)
 	}
@@ -161,6 +164,9 @@ func resolvePrepare(options Options) (prepareConfig, error) {
 	image, err := resolvePlanImage(settings, options.LookupEnv)
 	if err != nil {
 		return prepareConfig{}, err
+	}
+	if plainErr := requireLoopbackPlainHTTP(image, settings.PlainHTTP); plainErr != nil {
+		return prepareConfig{}, plainErr
 	}
 	version, err := resolvePlanVersion(settings, options.LookupEnv)
 	if err != nil {

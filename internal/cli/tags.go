@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -150,6 +151,9 @@ func resolveTags(options Options) (tagsConfig, error) {
 	if options.settings != nil {
 		settings = *options.settings
 	}
+	if err := settings.err; err != nil {
+		return tagsConfig{}, err
+	}
 
 	digest, err := resolvePlanDigest(settings)
 	if err != nil {
@@ -158,6 +162,9 @@ func resolveTags(options Options) (tagsConfig, error) {
 	image, err := resolvePlanImage(settings, options.LookupEnv)
 	if err != nil {
 		return tagsConfig{}, err
+	}
+	if plainErr := requireLoopbackPlainHTTP(image, settings.PlainHTTP); plainErr != nil {
+		return tagsConfig{}, plainErr
 	}
 	version, err := resolvePlanVersion(settings, options.LookupEnv)
 	if err != nil {
@@ -233,6 +240,33 @@ func deriveVersion(lookup LookupEnv) (string, error) {
 	}
 
 	return strings.TrimPrefix(refName, "v"), nil
+}
+
+// requireLoopbackPlainHTTP rejects --plain-http unless image is on loopback.
+func requireLoopbackPlainHTTP(image puboci.Image, plainHTTP bool) error {
+	if !plainHTTP {
+		return nil
+	}
+	if loopbackImageHost(image) {
+		return nil
+	}
+
+	return fmt.Errorf("--%s is allowed only for loopback image hosts", flagPlainHTTP)
+}
+
+// loopbackImageHost reports whether image's registry host is loopback.
+func loopbackImageHost(image puboci.Image) bool {
+	host, _, _ := strings.Cut(image.String(), "/")
+	hostname := host
+	if split, _, err := net.SplitHostPort(host); err == nil {
+		hostname = split
+	}
+	switch hostname {
+	case "127.0.0.1", "::1", "[::1]", "localhost":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveRegistryCredentials reads the optional Actions registry token.

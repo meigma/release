@@ -6,9 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"time"
 
 	"github.com/meigma/release/internal/rel"
 )
+
+const (
+	// retryAttempts is one initial publication call plus three retries.
+	retryAttempts = 4
+	// retryWait is the first backoff; later waits double (1s, 2s, 4s).
+	retryWait = time.Second
+)
+
+// SleepFunc waits for d or until ctx is cancelled.
+type SleepFunc func(ctx context.Context, d time.Duration) error
 
 // PrepareInput is the candidate image, layout, and expected index digest.
 type PrepareInput struct {
@@ -22,6 +33,9 @@ type PrepareInput struct {
 	Layout fs.FS
 	// DryRun skips every write, verification, and signature.
 	DryRun bool
+	// Sleep waits between retryable publication attempts. Nil selects a
+	// context-aware timer.
+	Sleep SleepFunc
 }
 
 // Prepare reads a local OCI layout, plans tags, and publishes digest-addressed content.
@@ -33,9 +47,13 @@ type PrepareInput struct {
 // those ports may be nil only in that mode. A real prepare pushes every layout
 // blob, then each platform manifest, then the index, verifies the index and
 // every platform digest (a deliberate strengthening of the workflow, which
-// verifies only the index), and signs the index recursively. Errors name the
-// failing step and descriptor digest and wrap the underlying error. Prepare
-// does not retry transient failures.
+// verifies only the index), and signs the index recursively. Each push and
+// verification is attempted at most four times. Failures wrapping
+// [ErrRetryable] wait 1s, then 2s, then 4s, and reopen the layout blob so the
+// stream starts at byte zero. Other errors fail immediately. Context
+// cancellation returns immediately. A nil [PrepareInput.Sleep] uses a
+// context-aware timer. Errors name the failing step and descriptor digest and
+// wrap the underlying error.
 func Prepare(
 	ctx context.Context,
 	input PrepareInput,
@@ -83,10 +101,15 @@ func Prepare(
 	if signer == nil {
 		return OCIPrepareResult{}, errors.New("signer is nil")
 	}
-	if err := pushContent(ctx, input.Image, input.Layout, layout, pusher); err != nil {
+
+	sleep := input.Sleep
+	if sleep == nil {
+		sleep = sleepContext
+	}
+	if err := pushContent(ctx, input.Image, input.Layout, layout, pusher, sleep); err != nil {
 		return OCIPrepareResult{}, err
 	}
-	if err := verifyContent(ctx, input.Image, layout, pusher); err != nil {
+	if err := verifyContent(ctx, input.Image, layout, pusher, sleep); err != nil {
 		return OCIPrepareResult{}, err
 	}
 
@@ -131,64 +154,81 @@ func validatePrepare(ctx context.Context, input PrepareInput, state StateReader)
 }
 
 // pushContent uploads blobs, platform manifests, then the index, in that order.
-func pushContent(ctx context.Context, image Image, fsys fs.FS, layout Layout, pusher ContentPusher) error {
+func pushContent(
+	ctx context.Context,
+	image Image,
+	fsys fs.FS,
+	layout Layout,
+	pusher ContentPusher,
+	sleep SleepFunc,
+) error {
 	for _, blob := range layout.Blobs {
-		if err := pushBlob(ctx, image, fsys, blob, pusher); err != nil {
+		if err := pushBlob(ctx, image, fsys, blob, pusher, sleep); err != nil {
 			return err
 		}
 	}
 	for _, platform := range layout.Platforms {
-		if err := pushManifest(ctx, image, fsys, platform.Descriptor, pusher); err != nil {
+		if err := pushManifest(ctx, image, fsys, platform.Descriptor, pusher, sleep); err != nil {
 			return err
 		}
 	}
 
-	return pushIndex(ctx, image, layout, pusher)
+	return pushIndex(ctx, image, layout, pusher, sleep)
 }
 
 // pushBlob streams one config or layer blob from the layout filesystem.
-func pushBlob(ctx context.Context, image Image, fsys fs.FS, desc Descriptor, pusher ContentPusher) error {
-	file, err := openLayoutBlob(fsys, desc.Digest)
-	if err != nil {
-		return fmt.Errorf("push blob %s: %w", desc.Digest, err)
-	}
-	err = pusher.PushBlob(ctx, image, desc, file)
-	closeErr := file.Close()
-	if err != nil {
-		return fmt.Errorf("push blob %s: %w", desc.Digest, err)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close blob %s: %w", desc.Digest, closeErr)
-	}
+func pushBlob(
+	ctx context.Context,
+	image Image,
+	fsys fs.FS,
+	desc Descriptor,
+	pusher ContentPusher,
+	sleep SleepFunc,
+) error {
+	return withRetry(ctx, sleep, "push blob", desc.Digest, func() error {
+		file, err := openLayoutBlob(fsys, desc.Digest)
+		if err != nil {
+			return err
+		}
+		err = pusher.PushBlob(ctx, image, desc, file)
+		closeErr := file.Close()
+		if err != nil {
+			return err
+		}
 
-	return nil
+		return closeErr
+	})
 }
 
 // pushManifest streams one platform manifest from the layout filesystem.
-func pushManifest(ctx context.Context, image Image, fsys fs.FS, desc Descriptor, pusher ContentPusher) error {
-	file, err := openLayoutBlob(fsys, desc.Digest)
-	if err != nil {
-		return fmt.Errorf("push manifest %s: %w", desc.Digest, err)
-	}
-	err = pusher.PushManifest(ctx, image, desc, file)
-	closeErr := file.Close()
-	if err != nil {
-		return fmt.Errorf("push manifest %s: %w", desc.Digest, err)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close manifest %s: %w", desc.Digest, closeErr)
-	}
+func pushManifest(
+	ctx context.Context,
+	image Image,
+	fsys fs.FS,
+	desc Descriptor,
+	pusher ContentPusher,
+	sleep SleepFunc,
+) error {
+	return withRetry(ctx, sleep, "push manifest", desc.Digest, func() error {
+		file, err := openLayoutBlob(fsys, desc.Digest)
+		if err != nil {
+			return err
+		}
+		err = pusher.PushManifest(ctx, image, desc, file)
+		closeErr := file.Close()
+		if err != nil {
+			return err
+		}
 
-	return nil
+		return closeErr
+	})
 }
 
 // pushIndex uploads the exact index.json bytes retained by [ReadLayout].
-func pushIndex(ctx context.Context, image Image, layout Layout, pusher ContentPusher) error {
-	if err := pusher.PushManifest(ctx, image, layout.Index, bytes.NewReader(layout.IndexBytes)); err != nil {
-		return fmt.Errorf("push index %s: %w", layout.Index.Digest, err)
-	}
-
-	return nil
+func pushIndex(ctx context.Context, image Image, layout Layout, pusher ContentPusher, sleep SleepFunc) error {
+	return withRetry(ctx, sleep, "push index", layout.Index.Digest, func() error {
+		return pusher.PushManifest(ctx, image, layout.Index, bytes.NewReader(layout.IndexBytes))
+	})
 }
 
 // verifyContent requires the published index, then each platform, to resolve.
@@ -196,18 +236,51 @@ func pushIndex(ctx context.Context, image Image, layout Layout, pusher ContentPu
 // The publish workflow verifies only the index. Checking every platform
 // manifest digest as well is a deliberate strengthening so a partial push
 // cannot look successful.
-func verifyContent(ctx context.Context, image Image, layout Layout, pusher ContentPusher) error {
-	indexRef := image.Pin(layout.Index.Digest)
-	if err := pusher.Verify(ctx, indexRef); err != nil {
-		return fmt.Errorf("verify index %s: %w", layout.Index.Digest, err)
+func verifyContent(ctx context.Context, image Image, layout Layout, pusher ContentPusher, sleep SleepFunc) error {
+	if err := withRetry(ctx, sleep, "verify index", layout.Index.Digest, func() error {
+		return pusher.Verify(ctx, image.Pin(layout.Index.Digest))
+	}); err != nil {
+		return err
 	}
 	for _, platform := range layout.Platforms {
-		if err := pusher.Verify(ctx, image.Pin(platform.Descriptor.Digest)); err != nil {
-			return fmt.Errorf("verify manifest %s: %w", platform.Descriptor.Digest, err)
+		if err := withRetry(ctx, sleep, "verify manifest", platform.Descriptor.Digest, func() error {
+			return pusher.Verify(ctx, image.Pin(platform.Descriptor.Digest))
+		}); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+// withRetry runs op up to [retryAttempts] times when the error is [ErrRetryable].
+//
+// A cancelled context returns immediately. Non-retryable errors fail on the
+// first attempt. Exhausted retryable failures name the attempt count.
+func withRetry(ctx context.Context, sleep SleepFunc, step string, digest rel.Digest, op func() error) error {
+	var lastErr error
+	for attempt := 1; attempt <= retryAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%s %s: %w", step, digest, err)
+		}
+		err := op()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !errors.Is(err, ErrRetryable) || attempt == retryAttempts {
+			if errors.Is(err, ErrRetryable) {
+				return fmt.Errorf("%s %s after %d attempts: %w", step, digest, attempt, err)
+			}
+
+			return fmt.Errorf("%s %s: %w", step, digest, err)
+		}
+		if err := sleep(ctx, retryWait<<(attempt-1)); err != nil {
+			return fmt.Errorf("%s %s: %w", step, digest, err)
+		}
+	}
+
+	return fmt.Errorf("%s %s after %d attempts: %w", step, digest, retryAttempts, lastErr)
 }
 
 // openLayoutBlob opens digest's blob file on fsys for streaming.
@@ -222,4 +295,16 @@ func openLayoutBlob(fsys fs.FS, digest rel.Digest) (fs.File, error) {
 	}
 
 	return file, nil
+}
+
+// sleepContext waits for d or returns ctx.Err() if the context ends first.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

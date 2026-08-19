@@ -121,8 +121,8 @@ func ParsePrepareResult(r io.Reader) (OCIPrepareResult, error) {
 //
 // It rejects a schema other than [PrepareSchema], an empty image, an
 // unparsable version or index digest, an empty platform list, a platform
-// subject with an unparsable digest, and an absent tag observation that
-// still carries a digest.
+// subject with an empty platform or an unparsable digest, and an absent
+// tag observation that still carries a digest.
 func (r OCIPrepareResult) Validate() error {
 	if r.Schema != PrepareSchema {
 		return fmt.Errorf("prepare result schema %q is unsupported", r.Schema)
@@ -140,6 +140,9 @@ func (r OCIPrepareResult) Validate() error {
 		return errors.New("prepare result has no platforms")
 	}
 	for i, platform := range r.Platforms {
+		if platform.Platform == "" {
+			return fmt.Errorf("prepare result platforms[%d] platform is empty", i)
+		}
 		if _, err := rel.ParseDigest(platform.Digest); err != nil {
 			return fmt.Errorf("prepare result platforms[%d] digest: %w", i, err)
 		}

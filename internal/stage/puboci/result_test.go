@@ -3,6 +3,7 @@ package puboci_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
@@ -91,6 +92,15 @@ func TestParsePrepareResultRejectsUnknownField(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown field")
 }
 
+func TestParsePrepareResultRejectsOverLimit(t *testing.T) {
+	t.Parallel()
+
+	_, err := puboci.ParsePrepareResult(overLimitPrepareReader())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prepare result:")
+	assert.NotContains(t, err.Error(), "unsupported")
+}
+
 func TestOCIPrepareResultValidate(t *testing.T) {
 	t.Parallel()
 
@@ -141,6 +151,14 @@ func TestOCIPrepareResultValidate(t *testing.T) {
 				return result
 			},
 			wantErr: "prepare result has no platforms",
+		},
+		{
+			name: "empty platform",
+			mutate: func(result puboci.OCIPrepareResult) puboci.OCIPrepareResult {
+				result.Platforms[0].Platform = ""
+				return result
+			},
+			wantErr: "prepare result platforms[0] platform is empty",
 		},
 		{
 			name: "bad platform digest",
@@ -266,4 +284,29 @@ func validPrepareResult(t *testing.T) puboci.OCIPrepareResult {
 		fixture.state,
 		true,
 	)
+}
+
+// overLimitPrepareReader streams a prepare document larger than the JSON bound.
+func overLimitPrepareReader() io.Reader {
+	prefix := `{"schema":"` + puboci.PrepareSchema + `","authoritative":false,"image":"`
+	suffix := `","version":"1.2.3","index_digest":"` + validDigest +
+		`","platforms":[{"platform":"linux/amd64","digest":"` + validDigest + `"}],"observed":[]}`
+
+	return io.MultiReader(
+		strings.NewReader(prefix),
+		io.LimitReader(repeatByteReader('a'), testOverJSONLimitBytes),
+		strings.NewReader(suffix),
+	)
+}
+
+// repeatByteReader yields an endless stream of one byte.
+type repeatByteReader byte
+
+// Read fills p with the repeated byte.
+func (r repeatByteReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(r)
+	}
+
+	return len(p), nil
 }

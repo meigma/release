@@ -415,13 +415,35 @@ func TestPlanTagsCredentialResolution(t *testing.T) {
 		assert.False(t, got.PlainHTTP)
 	})
 
-	t.Run("plain http reaches the factory", func(t *testing.T) {
+	t.Run("plain http is refused for ghcr", func(t *testing.T) {
+		t.Parallel()
+
+		called := false
+		stdout, err := executeTagsFactory(t, nil, []string{
+			"plan", "tags",
+			"--image", tagsImage,
+			"--version", "1.2.3",
+			"--digest", tagsDigest,
+			"--plain-http",
+			"--json",
+		}, func(cli.RegistryConfig) (puboci.StateReader, error) {
+			called = true
+			return unusedReader(t), nil
+		})
+		require.Error(t, err)
+		assert.Equal(t, 2, cli.ExitCode(err))
+		assert.False(t, called)
+		assert.Contains(t, err.Error(), "--plain-http")
+		assert.Equal(t, 1, countJSONDocuments(stdout))
+	})
+
+	t.Run("plain http is allowed for loopback", func(t *testing.T) {
 		t.Parallel()
 
 		var got cli.RegistryConfig
 		_, err := executeTagsFactory(t, nil, []string{
 			"plan", "tags",
-			"--image", tagsImage,
+			"--image", "127.0.0.1:5000/owner/repo",
 			"--version", "1.2.3",
 			"--digest", tagsDigest,
 			"--plain-http",
@@ -432,6 +454,25 @@ func TestPlanTagsCredentialResolution(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, got.PlainHTTP)
 		assert.True(t, got.Credentials.Password.IsEmpty())
+	})
+
+	t.Run("plain http env is ignored", func(t *testing.T) {
+		t.Parallel()
+
+		var got cli.RegistryConfig
+		_, err := executeTagsFactory(t, map[string]string{
+			"RELEASE_PLAIN_HTTP": "true",
+		}, []string{
+			"plan", "tags",
+			"--image", tagsImage,
+			"--version", "1.2.3",
+			"--digest", tagsDigest,
+		}, func(config cli.RegistryConfig) (puboci.StateReader, error) {
+			got = config
+			return absentReader(t), nil
+		})
+		require.NoError(t, err)
+		assert.False(t, got.PlainHTTP)
 	})
 }
 

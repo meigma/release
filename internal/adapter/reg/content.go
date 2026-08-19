@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 
 	godigest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote"
-	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/meigma/release/internal/rel"
 	"github.com/meigma/release/internal/stage/puboci"
@@ -36,8 +34,9 @@ func (c *Client) PushBlob(
 
 // PushManifest implements [puboci.ContentPusher].
 //
-// The registry stores content under descriptor.MediaType. Content is streamed
-// and is never buffered. An already-present manifest is success.
+// The registry stores content under descriptor.MediaType. An already-present
+// manifest is success. Unlike [Client.PushBlob], the authenticated oras
+// manifest path may buffer the document in memory before the request.
 func (c *Client) PushManifest(
 	ctx context.Context,
 	image puboci.Image,
@@ -101,6 +100,9 @@ func (c *Client) pushContent(
 	kind string,
 	push func(context.Context, *remote.Repository, ocispec.Descriptor, io.Reader) error,
 ) error {
+	if content == nil {
+		return fmt.Errorf("push %s %s: content is nil", kind, descriptor.Digest)
+	}
 	if err := descriptor.Validate(); err != nil {
 		return fmt.Errorf("push %s %s: %w", kind, descriptor.Digest, err)
 	}
@@ -143,19 +145,7 @@ func pushManifest(
 
 // isAlreadyPresent reports whether err means the content is already in the registry.
 func isAlreadyPresent(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, errdef.ErrAlreadyExists) {
-		return true
-	}
-
-	var respErr *errcode.ErrorResponse
-	if errors.As(err, &respErr) && respErr.StatusCode == http.StatusConflict {
-		return true
-	}
-
-	return false
+	return errors.Is(err, errdef.ErrAlreadyExists)
 }
 
 // ociDescriptor converts a domain descriptor into an oras descriptor.

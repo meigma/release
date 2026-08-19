@@ -33,6 +33,16 @@ const (
 	testARM64Layer = "arm64-layer"
 	// testSharedLayer is a layer blob referenced by both platforms.
 	testSharedLayer = "shared-layer"
+	// testBytesPerKiB is the number of bytes in a kibibyte.
+	testBytesPerKiB = 1024
+	// testKibibytesPerMiB is the number of kibibytes in a mebibyte.
+	testKibibytesPerMiB = 1024
+	// testJSONLimitMiB matches the package JSON document bound.
+	testJSONLimitMiB = 4
+	// testJSONLimitBytes is the maximum encoded JSON document ReadLayout buffers.
+	testJSONLimitBytes int64 = testJSONLimitMiB * testBytesPerKiB * testKibibytesPerMiB
+	// testOverJSONLimitBytes is one byte past the JSON document bound.
+	testOverJSONLimitBytes = testJSONLimitBytes + 1
 )
 
 func TestReadLayoutTwoPlatforms(t *testing.T) {
@@ -80,7 +90,7 @@ func TestReadLayoutErrors(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		files   fstest.MapFS
+		files   fs.FS
 		wantErr string
 	}{
 		{
@@ -164,6 +174,21 @@ func TestReadLayoutErrors(t *testing.T) {
 			name:    "conflicting blob size",
 			files:   conflictingLayerLayout(t),
 			wantErr: "conflicting descriptors",
+		},
+		{
+			name:    "missing platform",
+			files:   missingPlatformLayout(t, manifest),
+			wantErr: "platform is missing",
+		},
+		{
+			name:    "oversized index.json",
+			files:   oversizedIndexLayout(t),
+			wantErr: "exceeds the",
+		},
+		{
+			name:    "oversized platform manifest",
+			files:   oversizedManifestLayout(t, manifest),
+			wantErr: "exceeds the",
 		},
 	}
 
@@ -289,6 +314,119 @@ func conflictingLayerLayout(t *testing.T) fstest.MapFS {
 		blobFile(t, arm64Config.Digest):   {Data: []byte(testARM64Config)},
 		blobFile(t, sharedLayer.Digest):   {Data: shared},
 	}
+}
+
+// missingPlatformLayout is an index whose only manifest has no platform.
+func missingPlatformLayout(t *testing.T, manifest puboci.Descriptor) fstest.MapFS {
+	t.Helper()
+
+	return fstest.MapFS{
+		layoutFileName(): {Data: []byte(testLayoutJSON)},
+		indexFileName(): {Data: encodeIndex(t, ocispec.Index{
+			Versioned: specs.Versioned{SchemaVersion: testOCISchemaVersion},
+			MediaType: ocispec.MediaTypeImageIndex,
+			Manifests: []ocispec.Descriptor{ociDescriptor(manifest, nil)},
+		})},
+	}
+}
+
+// oversizedIndexLayout reports an index.json larger than the JSON bound.
+func oversizedIndexLayout(t *testing.T) fs.FS {
+	t.Helper()
+
+	return withReportedSize(fstest.MapFS{
+		layoutFileName(): {Data: []byte(testLayoutJSON)},
+		indexFileName():  {Data: []byte(`{}`)},
+	}, indexFileName(), testOverJSONLimitBytes)
+}
+
+// oversizedManifestLayout points a valid index at a too-large platform manifest.
+func oversizedManifestLayout(t *testing.T, manifest puboci.Descriptor) fs.FS {
+	t.Helper()
+
+	desc := manifest
+	desc.Size = testOverJSONLimitBytes
+
+	return withReportedSize(fstest.MapFS{
+		layoutFileName(): {Data: []byte(testLayoutJSON)},
+		indexFileName(): {
+			Data: encodeIndexFrom(t, indexEntry{desc: desc, platform: linuxAMD64()}),
+		},
+		blobFile(t, desc.Digest): {Data: []byte(`{"schemaVersion":2}`)},
+	}, blobFile(t, desc.Digest), testOverJSONLimitBytes)
+}
+
+// withReportedSize reports size for name without allocating that many bytes.
+func withReportedSize(base fstest.MapFS, name string, size int64) fs.FS {
+	return sizedFS{MapFS: base, sizes: map[string]int64{name: size}}
+}
+
+// sizedFS is a MapFS that lies about selected file sizes.
+type sizedFS struct {
+	// MapFS is the underlying layout files.
+	fstest.MapFS
+
+	// sizes overrides Stat size for named files.
+	sizes map[string]int64
+}
+
+// Open returns a file whose Stat reports any overridden size.
+func (s sizedFS) Open(name string) (fs.File, error) {
+	file, err := s.MapFS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if size, ok := s.sizes[name]; ok {
+		return sizedFile{File: file, size: size}, nil
+	}
+
+	return file, nil
+}
+
+// Stat reports any overridden size for name.
+func (s sizedFS) Stat(name string) (fs.FileInfo, error) {
+	info, err := s.MapFS.Stat(name)
+	if err != nil {
+		return nil, err
+	}
+	if size, ok := s.sizes[name]; ok {
+		return sizedInfo{FileInfo: info, size: size}, nil
+	}
+
+	return info, nil
+}
+
+// sizedFile is a file whose Stat reports a fixed size.
+type sizedFile struct {
+	// File is the opened underlying file.
+	fs.File
+
+	// size is the reported content length.
+	size int64
+}
+
+// Stat returns the overridden size.
+func (f sizedFile) Stat() (fs.FileInfo, error) {
+	info, err := f.File.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	return sizedInfo{FileInfo: info, size: f.size}, nil
+}
+
+// sizedInfo is a FileInfo with a replaced Size.
+type sizedInfo struct {
+	// FileInfo is the underlying file metadata.
+	fs.FileInfo
+
+	// size is the reported content length.
+	size int64
+}
+
+// Size returns the overridden content length.
+func (i sizedInfo) Size() int64 {
+	return i.size
 }
 
 // indexEntry is one index manifest descriptor and its platform.

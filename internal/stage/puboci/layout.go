@@ -82,11 +82,12 @@ func (p Platform) String() string {
 // file must exist. index.json is read verbatim; its descriptor digest is
 // SHA-256 over those exact bytes and its size is their length. The index
 // must use schemaVersion 2 and media type [ocispec.MediaTypeImageIndex] and
-// must list at least one manifest. Each manifest descriptor is validated,
-// its blob must exist as a regular file of the declared size, and its
-// config and layer blobs are collected the same way. Duplicate digests
-// keep the first descriptor; a later descriptor with a different size or
-// media type is an error. Layer and config blobs are never buffered.
+// must list at least one manifest. Each manifest descriptor is validated
+// and must name a platform with a non-empty OS and architecture. Its blob
+// must exist as a regular file of the declared size, and its config and
+// layer blobs are collected the same way. Duplicate digests keep the
+// first descriptor; a later descriptor with a different size or media
+// type is an error. Layer and config blobs are never buffered.
 // index.json and manifests are buffered up to [jsonLimitBytes].
 func ReadLayout(fsys fs.FS) (Layout, error) {
 	if fsys == nil {
@@ -203,6 +204,10 @@ func readPlatform(fsys fs.FS, raw ocispec.Descriptor, blobs *blobCollector) (Pla
 	if err != nil {
 		return PlatformImage{}, err
 	}
+	platform, err := requiredPlatform(raw.Platform)
+	if err != nil {
+		return PlatformImage{}, err
+	}
 	if blobErr := requireBlob(fsys, desc); blobErr != nil {
 		return PlatformImage{}, blobErr
 	}
@@ -224,7 +229,7 @@ func readPlatform(fsys fs.FS, raw ocispec.Descriptor, blobs *blobCollector) (Pla
 		return PlatformImage{}, err
 	}
 
-	return PlatformImage{Descriptor: desc, Platform: platformFrom(raw.Platform)}, nil
+	return PlatformImage{Descriptor: desc, Platform: platform}, nil
 }
 
 // collectBlobs records a manifest's config and layer descriptors in push order.
@@ -346,13 +351,19 @@ func descriptorFromOCI(desc ocispec.Descriptor) (Descriptor, error) {
 	return out, nil
 }
 
-// platformFrom copies an optional OCI platform into a [Platform].
-func platformFrom(platform *ocispec.Platform) Platform {
+// requiredPlatform copies a required OCI platform into a [Platform].
+func requiredPlatform(platform *ocispec.Platform) (Platform, error) {
 	if platform == nil {
-		return Platform{}
+		return Platform{}, errors.New("platform is missing")
+	}
+	if platform.OS == "" {
+		return Platform{}, errors.New("platform os is empty")
+	}
+	if platform.Architecture == "" {
+		return Platform{}, errors.New("platform architecture is empty")
 	}
 
-	return Platform{OS: platform.OS, Architecture: platform.Architecture}
+	return Platform{OS: platform.OS, Architecture: platform.Architecture}, nil
 }
 
 // digestBytes returns the sha256 digest of data.

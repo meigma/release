@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"time"
 
 	"github.com/meigma/release/internal/stage/puboci"
 )
@@ -20,6 +21,15 @@ const (
 	// stderrTailLimit is the maximum number of trailing stderr bytes
 	// included in a nonzero-exit error.
 	stderrTailLimit = stderrTailKiB * bytesPerKiB
+	// waitDelay is how long [exec.Cmd] waits for leaked child I/O after
+	// the process exits or the context is canceled.
+	//
+	// Stderr is a tail buffer, not an [*os.File], so [os/exec] copies
+	// through a pipe and [exec.Cmd.Wait] blocks until EOF.
+	// [exec.CommandContext] kills only the direct child; a grandchild
+	// holding the write end would hang [Signer.SignRecursive] forever
+	// without this bound.
+	waitDelay = 5 * time.Second
 )
 
 // Options configures a [Signer].
@@ -103,7 +113,9 @@ func (s *Signer) SignRecursive(ctx context.Context, ref puboci.DigestRef) error 
 		stderr = io.MultiWriter(s.stderr, tail)
 	}
 	cmd.Stderr = stderr
-
+	// WaitDelay unblocks Wait if a grandchild still holds the stderr pipe
+	// after CommandContext kills only the direct child.
+	cmd.WaitDelay = waitDelay
 	if err := cmd.Run(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("sign %s: %w", ref, ctxErr)

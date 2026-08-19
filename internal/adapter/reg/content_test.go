@@ -101,7 +101,12 @@ func TestPushImageRoundTrip(t *testing.T) {
 
 	require.NoError(t, client.Verify(context.Background(), image.Pin(fixture.index.Digest)))
 	require.NoError(t, client.Verify(context.Background(), image.Pin(fixture.manifest.Digest)))
-	assert.Equal(t, fixture.indexBytes, getManifest(t, server, fixture.index.Digest))
+	indexBody, indexType := getManifest(t, server, fixture.index.Digest)
+	manifestBody, manifestType := getManifest(t, server, fixture.manifest.Digest)
+	assert.Equal(t, fixture.indexBytes, indexBody)
+	assert.Equal(t, ocispec.MediaTypeImageIndex, indexType)
+	assert.Equal(t, fixture.manifestBytes, manifestBody)
+	assert.Equal(t, ocispec.MediaTypeImageManifest, manifestType)
 	assert.Equal(t, fixture.layerBytes, getBlob(t, server, fixture.layer.Digest))
 }
 
@@ -119,7 +124,7 @@ func TestPushBlobConvergesOnRetry(t *testing.T) {
 	assert.Equal(t, body, getBlob(t, server, desc.Digest))
 }
 
-func TestPushBlobConflictIsSuccess(t *testing.T) {
+func TestPushBlobConflictIsError(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -128,13 +133,17 @@ func TestPushBlobConflictIsSuccess(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	body := []byte(testLayerPayload)
+	desc := descriptorFor(t, ocispec.MediaTypeImageLayer, body)
 	err := newPlainClient(server).PushBlob(
 		context.Background(),
 		mustImage(t, server),
-		descriptorFor(t, ocispec.MediaTypeImageLayer, body),
+		desc,
 		bytes.NewReader(body),
 	)
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errdef.ErrAlreadyExists)
+	assert.Contains(t, err.Error(), "push blob")
+	assert.Contains(t, err.Error(), desc.Digest.String())
 }
 
 func TestAlreadyPresentIsSuccess(t *testing.T) {
@@ -142,8 +151,8 @@ func TestAlreadyPresentIsSuccess(t *testing.T) {
 
 	assert.True(t, isAlreadyPresent(errdef.ErrAlreadyExists))
 	assert.True(t, isAlreadyPresent(errors.Join(errdef.ErrAlreadyExists)))
-	assert.True(t, isAlreadyPresent(&errcode.ErrorResponse{StatusCode: http.StatusConflict}))
 	assert.False(t, isAlreadyPresent(nil))
+	assert.False(t, isAlreadyPresent(&errcode.ErrorResponse{StatusCode: http.StatusConflict}))
 	assert.False(t, isAlreadyPresent(&errcode.ErrorResponse{StatusCode: http.StatusBadRequest}))
 }
 
@@ -290,6 +299,16 @@ func TestPushAndVerifyRejectNil(t *testing.T) {
 		"registry client is nil",
 	)
 	require.EqualError(t, (*Client)(nil).Verify(context.Background(), ref), "registry client is nil")
+	require.EqualError(
+		t,
+		client.PushBlob(context.Background(), image, desc, nil),
+		"push blob "+desc.Digest.String()+": content is nil",
+	)
+	require.EqualError(
+		t,
+		client.PushManifest(context.Background(), image, desc, nil),
+		"push manifest "+desc.Digest.String()+": content is nil",
+	)
 }
 
 // imageFixture is a one-platform image used by digest-push tests.
@@ -371,8 +390,8 @@ func encodeJSON(t *testing.T, value any) []byte {
 	return body
 }
 
-// getManifest fetches a digest-addressed manifest from the fake registry.
-func getManifest(t *testing.T, server *httptest.Server, digest rel.Digest) []byte {
+// getManifest fetches a digest-addressed manifest and its stored media type.
+func getManifest(t *testing.T, server *httptest.Server, digest rel.Digest) ([]byte, string) {
 	t.Helper()
 
 	return getPath(t, server, "/v2/"+testRepo+"/manifests/"+digest.String())
@@ -382,11 +401,13 @@ func getManifest(t *testing.T, server *httptest.Server, digest rel.Digest) []byt
 func getBlob(t *testing.T, server *httptest.Server, digest rel.Digest) []byte {
 	t.Helper()
 
-	return getPath(t, server, "/v2/"+testRepo+"/blobs/"+digest.String())
+	body, _ := getPath(t, server, "/v2/"+testRepo+"/blobs/"+digest.String())
+
+	return body
 }
 
-// getPath GETs path from server and returns the response body.
-func getPath(t *testing.T, server *httptest.Server, path string) []byte {
+// getPath GETs path from server and returns the response body and Content-Type.
+func getPath(t *testing.T, server *httptest.Server, path string) ([]byte, string) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+path, nil)
@@ -398,5 +419,5 @@ func getPath(t *testing.T, server *httptest.Server, path string) []byte {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	return body
+	return body, resp.Header.Get("Content-Type")
 }

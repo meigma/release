@@ -7,6 +7,7 @@ import (
 	"io"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -149,7 +150,110 @@ func TestPrepareSignFailure(t *testing.T) {
 	assert.Equal(t, puboci.OCIPrepareResult{}, got)
 }
 
-func TestPrepareRetryablePush(t *testing.T) {
+func TestPrepareRetryableBlobThenSucceeds(t *testing.T) {
+	t.Parallel()
+
+	tc := newPrepareTest(t, []byte(testAMD64Layer), []byte(testARM64Layer))
+	var waits []time.Duration
+	tc.input.Sleep = recordSleep(&waits)
+	expectEmptyRegistry(tc.reader, tc.plan)
+
+	first := tc.layout.Blobs[0]
+	var attempts [][]byte
+	tc.pusher.EXPECT().
+		PushBlob(mock.Anything, tc.input.Image, first, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ puboci.Image, _ puboci.Descriptor, content io.Reader) error {
+			attempts = append(attempts, readAll(t, content))
+
+			return puboci.ErrRetryable
+		}).
+		Times(2)
+	tc.pusher.EXPECT().
+		PushBlob(mock.Anything, tc.input.Image, first, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ puboci.Image, _ puboci.Descriptor, content io.Reader) error {
+			attempts = append(attempts, readAll(t, content))
+
+			return nil
+		}).
+		Once()
+
+	gotContent := &pushedContent{byDigest: make(map[string][]byte)}
+	for _, blob := range tc.layout.Blobs[1:] {
+		expectPushBlob(t, tc, blob, gotContent)
+	}
+	for _, platform := range tc.layout.Platforms {
+		expectPushManifest(t, tc, platform.Descriptor, gotContent)
+	}
+	expectPushIndex(t, tc, gotContent)
+	expectVerifies(tc, gotContent)
+	expectSign(tc, gotContent)
+
+	got, err := puboci.Prepare(context.Background(), tc.input, tc.reader, tc.pusher, tc.signer)
+	require.NoError(t, err)
+	assert.True(t, got.Authoritative)
+	require.Len(t, attempts, 3)
+	wantBlob := readLayoutFile(t, tc.files, first.Digest)
+	for _, body := range attempts {
+		assert.Equal(t, wantBlob, body)
+	}
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second}, waits)
+}
+
+func TestPrepareRetryablePushExhausted(t *testing.T) {
+	t.Parallel()
+
+	tc := newPrepareTest(t, []byte(testAMD64Layer), []byte(testARM64Layer))
+	var waits []time.Duration
+	tc.input.Sleep = recordSleep(&waits)
+	expectEmptyRegistry(tc.reader, tc.plan)
+	first := tc.layout.Blobs[0]
+	tc.pusher.EXPECT().
+		PushBlob(mock.Anything, tc.input.Image, first, mock.Anything).
+		Return(puboci.ErrRetryable).
+		Times(4)
+
+	_, err := puboci.Prepare(context.Background(), tc.input, tc.reader, tc.pusher, tc.signer)
+	require.ErrorIs(t, err, puboci.ErrRetryable)
+	assert.Contains(t, err.Error(), "push blob")
+	assert.Contains(t, err.Error(), "after 4 attempts")
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, waits)
+}
+
+func TestPrepareRetryableVerifyThenSucceeds(t *testing.T) {
+	t.Parallel()
+
+	tc := newPrepareTest(t, []byte(testAMD64Layer), []byte(testARM64Layer))
+	var waits []time.Duration
+	tc.input.Sleep = recordSleep(&waits)
+	expectEmptyRegistry(tc.reader, tc.plan)
+	expectPushes(t, tc, &pushedContent{})
+	indexRef := tc.input.Image.Pin(tc.layout.Index.Digest)
+	tc.pusher.EXPECT().
+		Verify(mock.Anything, indexRef).
+		Return(puboci.ErrRetryable).
+		Once()
+	tc.pusher.EXPECT().
+		Verify(mock.Anything, indexRef).
+		Return(nil).
+		Once()
+	for _, platform := range tc.layout.Platforms {
+		tc.pusher.EXPECT().
+			Verify(mock.Anything, tc.input.Image.Pin(platform.Descriptor.Digest)).
+			Return(nil).
+			Once()
+	}
+	tc.signer.EXPECT().
+		SignRecursive(mock.Anything, indexRef).
+		Return(nil).
+		Once()
+
+	got, err := puboci.Prepare(context.Background(), tc.input, tc.reader, tc.pusher, tc.signer)
+	require.NoError(t, err)
+	assert.True(t, got.Authoritative)
+	assert.Equal(t, []time.Duration{time.Second}, waits)
+}
+
+func TestPrepareCancelDuringBackoff(t *testing.T) {
 	t.Parallel()
 
 	tc := newPrepareTest(t, []byte(testAMD64Layer), []byte(testARM64Layer))
@@ -160,9 +264,15 @@ func TestPrepareRetryablePush(t *testing.T) {
 		Return(puboci.ErrRetryable).
 		Once()
 
-	_, err := puboci.Prepare(context.Background(), tc.input, tc.reader, tc.pusher, tc.signer)
-	require.ErrorIs(t, err, puboci.ErrRetryable)
-	assert.Contains(t, err.Error(), "push blob")
+	ctx, cancel := context.WithCancel(context.Background())
+	tc.input.Sleep = func(_ context.Context, _ time.Duration) error {
+		cancel()
+
+		return context.Canceled
+	}
+
+	_, err := puboci.Prepare(ctx, tc.input, tc.reader, tc.pusher, tc.signer)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestPrepareRejectsInvalidInput(t *testing.T) {
@@ -272,6 +382,7 @@ func newPrepareTest(t *testing.T, amd64Layer, arm64Layer []byte) *prepareTest {
 			Version:     plan.version,
 			IndexDigest: layout.Index.Digest,
 			Layout:      fixture.files,
+			Sleep:       instantSleep,
 		},
 		layout: layout,
 		files:  fixture.files,
@@ -464,4 +575,28 @@ func wantPrepareResult(tc *prepareTest, authoritative bool) puboci.OCIPrepareRes
 		emptyState(tc.input.Version),
 		authoritative,
 	)
+}
+
+// instantSleep is a SleepFunc that never waits.
+func instantSleep(_ context.Context, _ time.Duration) error {
+	return nil
+}
+
+// recordSleep appends each backoff duration to waits.
+func recordSleep(waits *[]time.Duration) puboci.SleepFunc {
+	return func(_ context.Context, d time.Duration) error {
+		*waits = append(*waits, d)
+
+		return nil
+	}
+}
+
+// readAll consumes content and returns the bytes.
+func readAll(t *testing.T, content io.Reader) []byte {
+	t.Helper()
+
+	body, err := io.ReadAll(content)
+	require.NoError(t, err)
+
+	return body
 }
