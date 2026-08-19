@@ -222,6 +222,71 @@ func TestPublishGitHubEngineFailure(t *testing.T) {
 	assert.NotContains(t, stderr, githubToken)
 }
 
+func TestPublishGitHubIndeterminateWritesHint(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeClosedBundle(t)
+	ports := unusedGitHubPorts(t)
+	resolver := matchingResolver(t)
+	reader := ghrelmocks.NewMockReleaseReader(t)
+	releaseID := mustReleaseID(t)
+	tag := mustGitHubTag(t)
+	reader.EXPECT().
+		FindDraft(mock.Anything, mock.Anything, tag).
+		Return(pubgh.Release{
+			ID:    releaseID,
+			Tag:   tag,
+			Draft: false,
+			URL:   githubReleaseURL,
+		}, nil).
+		Once()
+	reader.EXPECT().
+		WaitAssets(mock.Anything, mock.Anything, releaseID).
+		Return(pubgh.AssetsView{}, nil).
+		Once()
+	ports.resolver = resolver
+	ports.reader = reader
+
+	stdout, stderr, err := executeGitHub(t, githubEnv(), []string{
+		"publish", "github",
+		"--dist", fixture.dir,
+		"--json",
+	}, ports)
+	require.Error(t, err)
+	assert.Equal(t, 1, cli.ExitCode(err))
+	require.ErrorIs(t, err, pubgh.ErrIndeterminate)
+	assert.Contains(t, stderr, "inspect the release in GitHub and reconcile manually")
+	assert.Contains(t, stderr, "do not rerun the publication blindly")
+	assert.NotContains(t, stdout, "inspect the release")
+	assertGitHubFailureEnvelope(t, stdout, pubgh.ErrIndeterminate.Error())
+	assert.NotContains(t, stdout, githubToken)
+	assert.NotContains(t, stderr, githubToken)
+}
+
+func TestPublishGitHubOrdinaryFailureOmitsHint(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeClosedBundle(t)
+	ports := unusedGitHubPorts(t)
+	resolver := gitxmocks.NewMockRefResolver(t)
+	resolver.EXPECT().
+		Resolve(mock.Anything, mock.Anything).
+		Return(pubgh.CommitSHA(""), errors.New("tag does not resolve")).
+		Once()
+	ports.resolver = resolver
+
+	stdout, stderr, err := executeGitHub(t, githubEnv(), []string{
+		"publish", "github",
+		"--dist", fixture.dir,
+		"--json",
+	}, ports)
+	require.Error(t, err)
+	assert.Equal(t, 1, cli.ExitCode(err))
+	assert.NotContains(t, stderr, "inspect the release")
+	assert.NotContains(t, stderr, "do not rerun")
+	assertGitHubFailureEnvelope(t, stdout, "tag does not resolve")
+}
+
 func TestPublishGitHubTokenReachesFactoriesAsSecret(t *testing.T) {
 	t.Parallel()
 

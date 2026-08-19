@@ -294,7 +294,8 @@ func verifyHandoff(
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		var backoff backoffError
+		if errors.As(err, &backoff) {
 			return ArtifactMetadata{}, fmt.Errorf("verify handoff: %w", err)
 		}
 

@@ -14,16 +14,34 @@ const (
 	retryWait = time.Second
 )
 
+// backoffError is a failed wait between retry attempts, including a
+// cancelled context observed before the next call.
+type backoffError struct {
+	// err is the wait or context error.
+	err error
+}
+
+// Error returns the wait error text.
+func (e backoffError) Error() string {
+	return e.err.Error()
+}
+
+// Unwrap returns the wait error.
+func (e backoffError) Unwrap() error {
+	return e.err
+}
+
 // retryOp runs op up to [retryAttempts] times when the error is [ErrRetryable].
 //
-// A cancelled context and a failed sleep return unwrapped so callers can
-// classify them. Non-retryable errors from op are wrapped as "step: err".
+// A cancelled context observed before a call and a failed sleep return as
+// [backoffError] so callers can wrap them separately from operation
+// failures. Non-retryable errors from op are wrapped as "step: err".
 // Exhausted retryable failures wrap the last error as "step after N attempts".
 func retryOp(ctx context.Context, sleep SleepFunc, step string, op func() error) error {
 	var lastErr error
 	for attempt := 1; attempt <= retryAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return backoffError{err: err}
 		}
 		err := op()
 		if err == nil {
@@ -38,7 +56,7 @@ func retryOp(ctx context.Context, sleep SleepFunc, step string, op func() error)
 			return fmt.Errorf("%s: %w", step, err)
 		}
 		if err := sleep(ctx, retryWait<<(attempt-1)); err != nil {
-			return err
+			return backoffError{err: err}
 		}
 	}
 	if lastErr == nil {

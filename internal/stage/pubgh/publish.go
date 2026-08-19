@@ -107,12 +107,15 @@ type PublishResult struct {
 //  2. Resolve the tag and fail unless it equals [PublishInput.Commit].
 //  3. Find the draft. Absence after the budget is [ErrNoDraft]. More than
 //     one release for the tag is [ErrAmbiguousRelease].
-//  4. A non-draft release is a rerun after a completed publication: if
-//     its assets match the expected set exactly (same names and count,
-//     every asset uploaded with a nonempty digest, every digest equal to
-//     "sha256:" plus the expected hex), return success with Draft false.
-//     Any other difference is [ErrIndeterminate]. This branch never
-//     creates, re-drafts, uploads, or deletes.
+//  4. A non-draft release is a rerun after a completed publication. If
+//     Undraft is false, that is [ErrIndeterminate]: a draft-only
+//     publication was requested but the release is already public. If
+//     Undraft is true and the assets match the expected set exactly
+//     (same names and count, every asset uploaded with a nonempty
+//     digest, every digest equal to "sha256:" plus the expected hex),
+//     return success with Draft false. Any other difference is
+//     [ErrIndeterminate]. This branch never creates, re-drafts,
+//     uploads, or deletes.
 //  5. Read assets once before uploading and refuse any existing name
 //     outside the expected set with [ErrUnexpectedAsset]. Unexpected
 //     assets are never deleted.
@@ -122,9 +125,10 @@ type PublishResult struct {
 //     is retried. A duplicate name, unexpected name, count above
 //     expected, or digest mismatch fails immediately.
 //  8. If Undraft, publish and require the final Get to report Draft
-//     false. A Get or draft-state failure after Publish is
-//     [ErrIndeterminate] because the remote release may already have
-//     left draft. Otherwise require the release to still be a draft.
+//     false. A Publish, Get, or draft-state failure after the undraft
+//     call is [ErrIndeterminate] because the remote release may
+//     already have left draft. Otherwise require the release to still
+//     be a draft.
 //  9. Return the release URL and the sorted converged asset names.
 //
 // Transient failures classified [ErrRetryable] are retried with the same
@@ -231,6 +235,14 @@ func publish(
 		return PublishResult{}, err
 	}
 	if !found.Draft {
+		if !input.Undraft {
+			return PublishResult{}, fmt.Errorf(
+				"%w: draft-only publication requested but release %s is already public",
+				ErrIndeterminate,
+				found.ID,
+			)
+		}
+
 		return acceptPublished(ctx, reader, input, found, sleep)
 	}
 
@@ -311,7 +323,8 @@ func findDraft(ctx context.Context, reader ReleaseReader, input PublishInput, sl
 // Exact means the observed assets have the same names and count as the
 // expected bundle, every asset is uploaded with a nonempty digest, and
 // every digest equals "sha256:" plus the expected hex. Anything else is
-// [ErrIndeterminate]. The branch never mutates: no upload, no undraft,
+// [ErrIndeterminate]. [publish] has already refused this branch when
+// Undraft is false. The branch never mutates: no upload, no undraft,
 // no re-draft, no deletion.
 func acceptPublished(
 	ctx context.Context,
@@ -458,7 +471,12 @@ func finalizeRelease(
 			return publisher.Publish(ctx, input.Repository, id)
 		})
 		if err != nil {
-			return Release{}, err
+			return Release{}, fmt.Errorf(
+				"%w: publish of release %s may have applied: %w",
+				ErrIndeterminate,
+				id,
+				err,
+			)
 		}
 	}
 

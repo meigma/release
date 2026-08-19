@@ -2,6 +2,7 @@ package pubgh_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -315,6 +316,33 @@ func TestPublishNoUndraftLeavesDraft(t *testing.T) {
 	tc.publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything, mock.Anything)
 }
 
+func TestPublishNoUndraftOnPublicReleaseIsIndeterminate(t *testing.T) {
+	t.Parallel()
+
+	tc := newPublishHarness(t)
+	tc.input.Undraft = false
+	published := tc.draft()
+	published.Draft = false
+	mock.InOrder(
+		tc.resolver.EXPECT().
+			Resolve(mock.Anything, tc.input.Tag).
+			Return(tc.input.Commit, nil).
+			Once(),
+		tc.reader.EXPECT().
+			FindDraft(mock.Anything, tc.input.Repository, tc.input.Tag).
+			Return(published, nil).
+			Once(),
+	)
+
+	_, err := pubgh.Publish(context.Background(), tc.input, tc.reader, tc.replacer, tc.publisher, tc.resolver)
+	require.ErrorIs(t, err, pubgh.ErrIndeterminate)
+	assert.Contains(t, err.Error(), "draft-only publication requested")
+	assert.Contains(t, err.Error(), "already public")
+	tc.reader.AssertNotCalled(t, "WaitAssets", mock.Anything, mock.Anything, mock.Anything)
+	tc.replacer.AssertNotCalled(t, "Replace", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	tc.publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything, mock.Anything)
+}
+
 func TestPublishUndraftStillDraftIsIndeterminate(t *testing.T) {
 	t.Parallel()
 
@@ -355,6 +383,46 @@ func TestPublishUndraftStillDraftIsIndeterminate(t *testing.T) {
 	_, err := pubgh.Publish(context.Background(), tc.input, tc.reader, tc.replacer, tc.publisher, tc.resolver)
 	require.ErrorIs(t, err, pubgh.ErrIndeterminate)
 	assert.Contains(t, err.Error(), "still a draft after publish")
+}
+
+func TestPublishUndraftMutationFailureIsIndeterminate(t *testing.T) {
+	t.Parallel()
+
+	tc := newPublishHarness(t)
+	draft := tc.draft()
+	view := expectedAssets()
+	mock.InOrder(
+		tc.resolver.EXPECT().
+			Resolve(mock.Anything, tc.input.Tag).
+			Return(tc.input.Commit, nil).
+			Once(),
+		tc.reader.EXPECT().
+			FindDraft(mock.Anything, tc.input.Repository, tc.input.Tag).
+			Return(draft, nil).
+			Once(),
+		tc.reader.EXPECT().
+			WaitAssets(mock.Anything, tc.input.Repository, draft.ID).
+			Return(pubgh.AssetsView{}, nil).
+			Once(),
+		tc.replacer.EXPECT().
+			Replace(mock.Anything, tc.input.Repository, tc.input.Tag, tc.input.Assets).
+			Return(nil).
+			Once(),
+		tc.reader.EXPECT().
+			WaitAssets(mock.Anything, tc.input.Repository, draft.ID).
+			Return(view, nil).
+			Once(),
+		tc.publisher.EXPECT().
+			Publish(mock.Anything, tc.input.Repository, draft.ID).
+			Return(errors.New("timeout after draft:false")).
+			Once(),
+	)
+
+	_, err := pubgh.Publish(context.Background(), tc.input, tc.reader, tc.replacer, tc.publisher, tc.resolver)
+	require.ErrorIs(t, err, pubgh.ErrIndeterminate)
+	assert.Contains(t, err.Error(), "may have applied")
+	assert.Contains(t, err.Error(), "timeout after draft:false")
+	tc.reader.AssertNotCalled(t, "Get", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestPublishRerunExactAssetsSucceeds(t *testing.T) {

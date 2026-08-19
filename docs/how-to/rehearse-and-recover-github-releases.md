@@ -126,6 +126,8 @@ gh api "repos/$REPOSITORY/releases/$RELEASE_ID" \
 
 For the documented current revision, the query must select exactly one release with the exact tag, `"draft": true`, `"prerelease": false`, and fourteen assets. Twelve asset names come from `checksums.txt`; the other two are the checksum manifest and its Cosign bundle. For an upgrade rehearsal, require the names and count defined by the target contract instead.
 
+If this rehearsal query reports `"draft": false`, stop. A `publish-release: false` run requires the release to remain a draft, so `publish github --no-undraft` classifies an already-public release as indeterminate even when all assets match. Inspect how the release became public; do not rerun the rehearsal or ask the CLI to re-draft it.
+
 Use the paginated releases API above or the repository's Releases UI while the release remains a draft. This procedure does not use by-tag CLI commands for draft discovery.
 
 Before resuming, inspect the Release workflow log and the draft asset list. Do not manually publish the draft. The final workflow must perform digest verification immediately before publication.
@@ -249,10 +251,17 @@ gh run view "$FAILED_RUN_ID" \
   --log-failed
 ```
 
-If `publish github` reports an indeterminate release state, or if the log ends during or after the undraft operation, inspect the releases collection and asset details with the commands in [Inspect the populated draft](#3-inspect-the-populated-draft). Do not rerun blindly:
+When `publish github` reports an indeterminate release state, it writes this remediation hint to stderr:
 
-- If exactly one matching release is still a draft, the failure occurred before a confirmed undraft. A rerun is safe when the authoritative artifact remains valid because the CLI reads the tag, release, and assets again and reconciles from that fresh state.
-- If exactly one matching release is public, compare its asset count, names, states, and digests with the expected bundle. A later CLI invocation reports success without mutation only for an exact match. Any other public state remains indeterminate and requires human handling.
+```text
+inspect the release in GitHub and reconcile manually; do not rerun the publication blindly
+```
+
+Follow that hint if the log ends during or after the undraft operation or reports that a draft-only publication found a public release. Inspect the releases collection and asset details with the commands in [Inspect the populated draft](#3-inspect-the-populated-draft):
+
+- If exactly one matching release is still a draft, the failure occurred before a confirmed undraft. After inspecting the state, a rerun is safe when the authoritative artifact remains valid because the CLI reads the tag, release, and assets again and reconciles from that fresh state.
+- If exactly one matching release is public and the failed run used `publish-release: true`, compare its asset count, names, states, and digests with the expected bundle. A later publish-enabled CLI invocation reports success without mutation only for an exact match. Any other public state remains indeterminate and requires human handling.
+- If exactly one matching release is public and the failed run used `publish-release: false`, the rehearsal did not preserve its draft-only outcome. The state remains indeterminate even when the assets match. Do not rerun or re-draft the release.
 - If no release or more than one release carries the tag, stop and resolve that state through the release incident process.
 
 If recovery changes source, workflow configuration, or tool pins, merge that correction, record its commit SHA, and trigger a new run by authorized movement of the unpublished tag to that commit. Then select the run by the exact tag and SHA as shown above. If the tag cannot be moved safely, abandon the incomplete candidate and cut a new one. When repository content is unchanged, the release remains a draft, and upstream build jobs succeeded, rerun only failed jobs with `gh run rerun "$FAILED_RUN_ID" --repo "$REPOSITORY" --failed`; this preserves the authoritative artifacts from the original workflow run. Use a complete rerun only when an upstream artifact must be rebuilt, such as artifact expiry or an artifact-handoff failure.
@@ -334,7 +343,7 @@ Do not use `--clobber` for an unexpected name. The CLI uses `--clobber` only for
 
 If no repository content changes, the release is still a draft, and the producer succeeded, rerun only failed jobs with `gh run rerun "$FAILED_RUN_ID" --repo "$REPOSITORY" --failed`. The CLI re-reads current state and may replace expected names in the same draft. If the failure requires a source, workflow, or pin correction, merge the correction and move the unpublished tag to that commit; otherwise abandon the candidate and cut a new one. If the failure repeats, leave the release as a draft and inspect the release asset state and workflow logs; do not publish through the UI. Manual removal is required only when an unexpected or otherwise unreconcilable asset prevents the CLI from restoring the closed name set.
 
-If the undraft request may have succeeded before a later failure, the CLI cannot roll the release back and reports the unproven state as indeterminate. Inspect the release and assets as described in [Diagnose a failed run](#diagnose-a-failed-run). Do not rerun blindly. If the release is public with the exact expected asset set, a later CLI invocation reports success without mutation. If the public asset set differs, the state remains indeterminate. The CLI never re-drafts the release.
+If the undraft request fails or may have succeeded before a later failure, the CLI cannot prove the final state and reports it as indeterminate. It writes the remediation hint in [Diagnose a failed run](#diagnose-a-failed-run). Inspect the release and assets; do not rerun blindly. For a publish-enabled run, a public release with the exact expected asset set can be reported as success by a later invocation without mutation. If the public asset set differs, the state remains indeterminate. For a draft-only run, every public state is indeterminate, including an exact asset match. The CLI never re-drafts the release.
 
 ## When manual cleanup is required
 

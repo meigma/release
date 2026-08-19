@@ -30,6 +30,9 @@ const (
 	envCommitSHA = "GITHUB_SHA"
 	// checksumsFile is the closed-set claim filename inside --dist.
 	checksumsFile = "checksums.txt"
+	// indeterminateHint tells the operator not to rerun a publication
+	// whose final draft state cannot be confirmed.
+	indeterminateHint = "inspect the release in GitHub and reconcile manually; do not rerun the publication blindly"
 )
 
 // newGitHubCommand constructs the publish github verb.
@@ -102,6 +105,7 @@ func runGitHub(cmd *cobra.Command, options Options) error {
 		Undraft:    expected.Undraft,
 	}, reader, replacer, publisher, resolver)
 	if err != nil {
+		writeIndeterminateHint(options, err)
 		return writeCommandResult(options, commandGitHub, nil, err)
 	}
 	if options.settings == nil || !options.settings.JSON {
@@ -338,4 +342,16 @@ func refResolver(options Options, expected githubConfig) (pubgh.RefResolver, err
 	}
 
 	return resolver, nil
+}
+
+// writeIndeterminateHint prints a one-line operator note when publication
+// cannot be confirmed. Ordinary failures write nothing.
+func writeIndeterminateHint(options Options, err error) {
+	if !errors.Is(err, pubgh.ErrIndeterminate) {
+		return
+	}
+	if options.Err == nil {
+		return
+	}
+	_, _ = fmt.Fprintln(options.Err, indeterminateHint)
 }

@@ -205,7 +205,7 @@ The supported Release Please configuration has these release-boundary values:
 | `bump-minor-pre-major` | `true` | Uses a minor bump for pre-1.0 features. |
 | `bump-patch-for-minor-pre-major` | `true` | Uses a patch bump for pre-1.0 fixes. |
 
-The initial version and pre-1.0 bump rules are current versioning policy, not reusable-workflow defaults. The publisher requires exactly one release for the tag and normally requires it to be a draft; it does not calculate a version or create either object. The only public-release exception is a completed-publication rerun whose assets exactly match the expected closed set.
+The initial version and pre-1.0 bump rules are current versioning policy, not reusable-workflow defaults. The publisher requires exactly one release for the tag and normally requires it to be a draft; it does not calculate a version or create either object. The only public-release success exception is a completed-publication rerun with `publish-release: true` whose assets exactly match the expected closed set. A public release under `publish-release: false` is indeterminate because the requested draft-only outcome was not preserved.
 
 Both versioning and publication use these organization-level credential identifiers:
 
@@ -228,7 +228,7 @@ The publisher proceeds only when all of these conditions hold:
 - The matching release is a draft before any mutation.
 - Before upload, every existing asset name belongs to the expected closed set.
 
-The CLI polls the release list up to 24 times, with attempts 5 seconds apart. It fails instead of creating a missing release. More than one release for the tag is ambiguous and fails closed. If the one matching release is already public, the CLI performs no mutation: an exact expected asset match reports a completed publication as success, and any other state is indeterminate.
+The CLI polls the release list up to 24 times, with attempts 5 seconds apart. It fails instead of creating a missing release. More than one release for the tag is ambiguous and fails closed. If the one matching release is already public, the CLI performs no mutation. With `publish-release: true`, it reads the assets: an exact expected match reports a completed publication as success, and any other asset state is indeterminate. With `publish-release: false`, every already-public state is indeterminate before any asset read.
 
 ## Repository and toolchain contract
 
@@ -374,7 +374,7 @@ A failure before the undraft operation is safe to rerun while the release remain
 
 A complete draft rehearsal sets both `publish-image: false` and `publish-release: false`. The workflow invokes `publish github --no-undraft`, which converges the asset set and stops while the release remains a draft. To resume, the caller changes both inputs to `true`, commits that change, and uses authorized movement of the same unpublished tag name to trigger a new run against the existing populated draft; it does not delete and recreate the draft. The workflow replaces expected assets only after the new artifact, checksums, and Cosign bundle pass validation. Any source, workflow configuration, or tool-pin correction follows the same commit and tag-movement requirement. If the unpublished tag cannot be moved safely, the incomplete candidate must be abandoned and a new candidate cut. A plain Actions rerun is reserved for failures that require no repository-content change, such as artifact expiry or a transient service failure.
 
-An undraft request has no rollback. If the CLI cannot prove the final draft state, it reports the release state as indeterminate. An operator must inspect the release and its assets instead of rerunning blindly. A later invocation against an already-public release reports success without mutation only when the release has the exact expected asset count, names, uploaded states, and digests. Any other already-public state remains indeterminate and requires human handling. The CLI never re-drafts the release.
+An undraft request has no rollback. A failure from the undraft call is indeterminate because the update may have applied. A failed final state read or an unexpected final draft flag is also indeterminate because the CLI cannot prove the requested outcome. An operator must inspect the release and its assets instead of rerunning blindly. A later invocation with `publish-release: true` against an already-public release reports success without mutation only when the release has the exact expected asset count, names, uploaded states, and digests. Under `publish-release: false`, an already-public release remains indeterminate even when its assets match, because a rehearsal must remain a draft. Any other public state also requires human handling. The CLI never re-drafts the release.
 
 ## Non-goals
 

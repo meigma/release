@@ -468,16 +468,16 @@ Publication enforces these guarantees in order:
 
 1. Resolve the exact tag with Git and require it to equal `GITHUB_SHA`.
 2. Poll GitHub for the tag and require it to identify exactly one release. Draft discovery makes 24 attempts, 5 seconds apart. Absence after this budget fails; the command never creates a release.
-3. Require a draft before taking the mutation path. If the one matching release is already public, read its assets without mutation. An exact match of count, names, uploaded states, and digests is a successful completed-publication rerun. Any other public state is indeterminate and requires human inspection. The command never re-drafts a release.
+3. Require a draft before taking the mutation path. If `--no-undraft` was requested and the one matching release is already public, the state is indeterminate because the requested draft-only outcome was not preserved. Without `--no-undraft`, an already-public release is read without mutation: an exact match of count, names, uploaded states, and digests is a successful completed-publication rerun; any other state is indeterminate. The command never re-drafts a release.
 4. Read the draft's assets and refuse any name outside the expected closed set. The command never deletes an unexpected asset.
 5. Upload every expected local path with `gh release upload --clobber`. Clobber applies only to expected names that passed the closed-set check.
 6. Poll asset state up to 12 times, 1 second apart. Success requires the expected count, unique expected names, `uploaded` state, and the exact GitHub-reported `sha256:<hex>` digest for every asset.
-7. If `--no-undraft` is absent, change the release from draft to public. This is the last mutation. If `--no-undraft` is present, do not change the draft state.
-8. Read the release again and require its final draft state to match the requested outcome before returning the release URL and sorted asset names.
+7. If `--no-undraft` is absent, change the release from draft to public. This is the last mutation. A failure from the undraft request is indeterminate because the update may have applied. If `--no-undraft` is present, do not change the draft state.
+8. Read the release again and require its final draft state to match the requested outcome before returning the release URL and sorted asset names. A failed final read or an unexpected state after an undraft request is indeterminate. A public final state under `--no-undraft` is also indeterminate.
 
 A retryable operation uses at most four attempts, waiting 1 second, 2 seconds, and 4 seconds between attempts. Tag and commit mismatches, unexpected assets, and digest mismatches are not retryable.
 
-Missing or malformed command configuration, including an invalid binary path, exits with code `2` before any publication request. After configuration succeeds, a tag-resolution command failure, GitHub API failure, upload failure, convergence failure, or release-contract failure exits with code `1`. Success exits with code `0`. No other exit code is defined.
+A missing distribution path (`--dist` or `RELEASE_DIST`), a missing `RELEASE_APP_TOKEN`, missing or malformed `GITHUB_REPOSITORY`, `GITHUB_REF_NAME`, or `GITHUB_SHA`, and malformed GitHub endpoint configuration are configuration errors. They exit with code `2` before any publication request. An unresolvable `RELEASE_GIT_PATH` or `RELEASE_GH_PATH` is reported when the selected binary is first invoked and exits with code `1`. The Git path is first used for tag resolution; the GitHub CLI path is first used for upload, after tag resolution, draft discovery, and the pre-upload asset read. Every other post-configuration tag-resolution, GitHub API, upload, convergence, or release-contract failure also exits with code `1`. Success exits with code `0`. No other exit code is defined.
 
 ## Signed release bundle verification
 

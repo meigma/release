@@ -19,13 +19,17 @@ import (
 )
 
 const (
-	testTag      = "v1.2.3"
-	testOwner    = "owner"
-	testName     = "repo"
-	testToken    = "test-app-token-value"
-	testPayload  = "checksums.txt"
-	testBundle   = "checksums.txt.sigstore.json"
-	testArtifact = "release.tar.gz"
+	testTag   = "v1.2.3"
+	testOwner = "owner"
+	testName  = "repo"
+	testToken = "test-app-token-value"
+	// testConflictToken is an inherited GH_TOKEN that must lose to [testToken].
+	// The length is deliberately different so the fixture can tell them apart
+	// without writing either value.
+	testConflictToken = "wrong-inherited-gh-token"
+	testPayload       = "checksums.txt"
+	testBundle        = "checksums.txt.sigstore.json"
+	testArtifact      = "release.tar.gz"
 	// cancelWait is how long the cancel test waits for the fake to start
 	// and then for Replace to return.
 	cancelWait = 2 * time.Second
@@ -86,6 +90,39 @@ func TestReplaceInvokesGH(t *testing.T) {
 	assertRecordedDir(t, cwdFile, work)
 	assertRecordedToken(t, tokenFile)
 	assertTokenAbsentFromFile(t, record)
+}
+
+func TestReplaceDropsInheritedGHToken(t *testing.T) {
+	skipWindows(t)
+	t.Parallel()
+
+	require.NotEqual(
+		t,
+		len(testToken),
+		len(testConflictToken),
+		"fixture lengths must differ so the child record can tell them apart",
+	)
+
+	dir := t.TempDir()
+	record := filepath.Join(dir, "args")
+	tokenFile := filepath.Join(dir, "token")
+	path := writeFake(t, dir)
+
+	err := New(Options{
+		Path:  path,
+		Token: rel.NewSecret(testToken),
+		Environ: fakeEnviron(t,
+			envGHToken+"="+testConflictToken,
+			"GHUP_RECORD="+record,
+			"GHUP_TOKEN="+tokenFile,
+		),
+	}).Replace(context.Background(), mustRepo(t), mustTag(t), mustAssets())
+	require.NoError(t, err)
+	assertRecordedArgv(t, record)
+	assertRecordedToken(t, tokenFile)
+	assertTokenAbsentFromFile(t, record)
+	assert.NotContains(t, readText(t, tokenFile), testConflictToken)
+	assert.NotContains(t, readText(t, record), testConflictToken)
 }
 
 func TestReplaceNonzeroExitIncludesCodeAndOmitsToken(t *testing.T) {
@@ -421,6 +458,16 @@ func assertTokenAbsentFromFile(t *testing.T, record string) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(body), testToken)
 	assert.NotContains(t, string(body), envGHToken)
+}
+
+// readText returns the contents of name or fails the test.
+func readText(t *testing.T, name string) string {
+	t.Helper()
+
+	body, err := os.ReadFile(name)
+	require.NoError(t, err)
+
+	return string(body)
 }
 
 // mustRepo returns the fixture GitHub repository.
