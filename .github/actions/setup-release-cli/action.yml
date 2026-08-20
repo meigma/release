@@ -14,8 +14,8 @@ inputs:
     default: ''
   local-build:
     description: >
-      Spike control for local source builds: auto builds a matching stable-tag
-      self-release, always forces a local build, and never forces installation.
+      Selects source acquisition: auto builds a matching version-tag self-release,
+      always builds the action source, and never installs the stamped release.
     required: false
     default: auto
 
@@ -29,15 +29,6 @@ outputs:
   reported-protocol:
     description: Protocol integer the binary reported.
     value: ${{ steps.resolve.outputs.reported-protocol }}
-  acquisition:
-    description: Acquisition mode selected by the action.
-    value: ${{ steps.select.outputs.mode }}
-  cache-hit:
-    description: Whether the exact local Go cache key was restored.
-    value: ${{ steps.go-cache.outputs.cache-hit }}
-  binary-sha256:
-    description: SHA-256 digest of the selected executable.
-    value: ${{ steps.resolve.outputs.binary-sha256 }}
 
 runs:
   using: composite
@@ -47,6 +38,7 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
         CALLER_REPOSITORY: ${{ github.repository }}
         CLI_PATH_INPUT: ${{ inputs.cli-path }}
         LOCAL_BUILD: ${{ inputs.local-build }}
@@ -104,6 +96,11 @@ runs:
           exit 0
         fi
 
+        if [[ -z "${ACTION_REPOSITORY}" || "${ACTION_REPOSITORY}" != "${WORKFLOW_REPOSITORY}" ]]; then
+          echo '::error::Local builds require the action and reusable workflow to come from the same repository.'
+          exit 1
+        fi
+
         if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
           echo "::error::Cannot derive an exact reusable-workflow source SHA; got ${WORKFLOW_SHA}."
           exit 1
@@ -129,7 +126,7 @@ runs:
           echo "source-root=${source_root}"
           echo "source-sha=${WORKFLOW_SHA}"
           echo "go-version=${go_version}"
-          echo "cache-key=release-cli-go-v2-${RUNNER_OS}-${RUNNER_ARCH}-go${go_version}-${WORKFLOW_SHA}"
+          echo "cache-key=release-cli-go-${RUNNER_OS}-${RUNNER_ARCH}-go${go_version}-${WORKFLOW_SHA}"
         } >>"${GITHUB_OUTPUT}"
 
     - name: Set up local Go toolchain
@@ -140,7 +137,7 @@ runs:
         working_directory: ${{ steps.select.outputs.source-root }}
         install_args: go
         cache: true
-        cache_key: mise-go-{{platform}}-{{version}}-{{install_args_hash}}-{{file_hash}}
+        cache_key: mise-release-cli-go-{{platform}}-{{version}}-{{file_hash}}
         add_shims_to_path: false
         export_path: false
 
@@ -270,15 +267,13 @@ runs:
           exit 1
         fi
 
-        binary_sha256="$(sha256sum "${binary}" | cut -d ' ' -f 1)"
         {
           echo "cli-path=${binary}"
           echo "reported-version=${reported_version}"
           echo "reported-protocol=${reported_protocol}"
-          echo "binary-sha256=${binary_sha256}"
         } >>"${GITHUB_OUTPUT}"
 
-        echo "mode=${mode} version=${reported_version} protocol=${reported_protocol} sha256=${binary_sha256}"
+        echo "mode=${mode} version=${reported_version} protocol=${reported_protocol}"
 
         if [[ "${mode}" == "installed" || "${mode}" == "local-build" ]]; then
           if [[ "${reported_version}" != "${DEFAULT_VERSION}" ]]; then
