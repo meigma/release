@@ -180,4 +180,88 @@ slices ago.
 
 PR #15 is awaiting human review; nothing is merged.
 
+## 2026-08-19 19:02 — PR 8 merged; PR 9 opened: `feat(image): verify OCI image contracts`
+
+PR #15 was accepted and squash-merged as **`e235a28`**. `main` fast-forwarded,
+the worktree and branch are gone. PR 9 is now open for human review:
+https://github.com/meigma/release/pull/16 (branch `feat/release-cli-image-verify`,
+commit `ddf29e7`, 14 files, +3535/-1154, CI green first run).
+
+`wt remove` note: `gh pr merge --squash --delete-branch` failed its local
+branch-checkout step because `main` is checked out in the primary worktree. The
+merge itself had already succeeded, so the fix was `git fetch --prune`,
+`git pull --ff-only` in the main checkout, `wt remove <branch> --force`, and
+`git push origin --delete <branch>`. Expect this every time in a worktree setup.
+
+What PR 9 lands:
+
+- `internal/stage/image/layout.go` — `ReadLayout`: `oci-layout` presence, exact
+  `index.json` bytes and their digest, per-platform manifest/config/layer
+  descriptors, blob existence at the declared size.
+- `internal/stage/image/verify.go` — `VerifyLayout`, `VerifySBOMs`,
+  `CanonicalDigests`. Index/manifest/config annotation and label equality, the
+  two-platform set, entrypoint, user 65532, exactly one layer, the layer's
+  `usr/bin/<binary>` entry streamed and compared byte for byte against the
+  canonical staged binary, and an SPDX `APPLICATION` package at `<version>-r0`.
+- `internal/cli/image.go` — `image verify`, which also writes
+  `<output>/image-digest.txt` (the publisher workflow reads that file) only after
+  both verifiers pass. `internal/cli/image_test.go` had crossed the R2 1,000-line
+  cap during PR 8's fix rounds and is now split three ways.
+- `.github/workflows/go-oci-build.yml` — the `verify` step keeps its id and runs
+  the CLI; the 112-line shell verifier is gone. Upload step byte-identical.
+
+Decisions worth inheriting:
+
+- **Two layout readers, on purpose.** `puboci.ReadLayout` (publish path) and
+  `image.ReadLayout` (build-time verification) overlap in roughly 60 lines of
+  index parsing. Consolidating would have meant touching `puboci.Descriptor`,
+  which is a port parameter type, so the blast radius reaches the mocks, the
+  `reg` adapter, and the CLI. Consolidation trigger: a third consumer needing
+  on-disk layout parsing.
+- **The engine gained a second responsibility, not a second package.**
+  `internal/stage/image` now both builds and verifies; `doc.go` says so.
+- **Verification never retries and never rebuilds.** Deterministic failure,
+  fail closed.
+
+Evidence (the plan called this CI-only; it was done locally instead):
+
+- Against the real apko 1.2.37 layout PR 8's CLI produced, `image verify` reports
+  the *same* `index_digest` the removed shell verifier had written into
+  `image-digest.txt`, and the same independent `shasum -a 256 layout/index.json`.
+  That is a direct oracle comparison against the code being deleted.
+- A rebuilt amd64 layer with one flipped byte in `usr/bin/release-cli` — with
+  manifest and index descriptors regenerated so every digest and size is
+  internally consistent — fails on content, proving the tar is actually read.
+- Appending a newline to `index.json` changes the reported digest, so the digest
+  really is over raw bytes.
+
+Review, and the one finding that mattered:
+
+- **Round 1 caught a privilege-escalation hole.** `checkBinaryHeader` compared
+  `header.FileInfo().Mode().Perm()`, which masks setuid, setgid, and sticky, so a
+  `04755` entrypoint passed. The shell script being replaced caught it by
+  string-comparing `-rwxr-xr-x`. The image runs as user 65532, so a setuid-root
+  entrypoint would have been a consumer-visible privesc primitive, and this
+  verifier is the only oracle for it. Now the raw tar mode is compared. Proven on
+  a rebuilt real layer: `usr/bin/release-cli has mode 04755, want 0755`.
+- **Round 2 overturned a conformance finding with evidence.** Conformance had
+  demanded `FileInfo().Mode().IsRegular()` so `tar.TypeRegA` would be accepted.
+  The reviewer probed `archive/tar` and showed the reader normalizes the historic
+  NUL typeflag to `'0'` before `Next()` returns: the path was dead, its test could
+  not fail, and the loose check had silently widened the accepted set to
+  `TypeCont` and unknown vendor flags. Final form is strict `Typeflag !=
+  tar.TypeReg` with `Mode&0o7777` so a producer that writes file-type bits into
+  the mode still passes while setuid/setgid/sticky stay rejected. Lesson: a
+  conformance rule citation is not evidence; probe the standard library.
+- Conformance's other two findings (a stale `doc.go`, and `--binary` shape
+  validated only after the roots were opened, surfacing as exit 1 instead of 2)
+  were real and are fixed.
+
+Caller-ceiling audit: PR 9 changes no `permissions` block anywhere, and all four
+caller jobs still match their callees in this repo, the copyable example, and the
+documented skeleton.
+
+Next: PR 10 moves the GoReleaser invocation into `goprof` and thins
+`go-pre-publish.yml`; PR 11 is the documentation pin that closes the program.
+
 
