@@ -30,6 +30,14 @@ const (
 	// holding the write end would hang [RunGoReleaser] forever without
 	// this bound.
 	waitDelay = 5 * time.Second
+	// escapeByte is the ASCII ESC that starts a CSI sequence.
+	escapeByte = 0x1b
+	// csiIntroducer is the byte that follows ESC in a CSI sequence.
+	csiIntroducer = '['
+	// csiFinalMin is the first CSI final-byte value (inclusive).
+	csiFinalMin = 0x40
+	// csiFinalMax is the last CSI final-byte value (inclusive).
+	csiFinalMax = 0x7e
 )
 
 // GoReleaserOptions configures one GoReleaser release run.
@@ -66,9 +74,10 @@ type GoReleaserOptions struct {
 // [GoReleaserOptions.Dist] is validated as a basename and never
 // forwarded. A nil context or an invalid Dist is rejected before any
 // process starts. A nonzero exit returns an error that names the exit
-// code and a tail of stderr limited to [stderrTailLimit] bytes. Child
-// stdout and stderr are copied to the supplied writers; nil writers
-// discard that stream. The error never includes the child environment.
+// code and a tail of stderr limited to [stderrTailLimit] bytes, with
+// ANSI color sequences stripped. Child stdout and stderr are copied to
+// the supplied writers unchanged, including color; nil writers discard
+// that stream. The error never includes the child environment.
 func RunGoReleaser(ctx context.Context, options GoReleaserOptions) error {
 	if err := validateGoReleaser(ctx, options); err != nil {
 		return err
@@ -160,16 +169,63 @@ func resolveBinary(path string) (string, error) {
 }
 
 // goreleaserError formats a GoReleaser process failure.
+//
+// The retained stderr tail is stripped of ANSI before it is copied
+// into the error so a --json envelope does not embed escape
+// sequences. The live [GoReleaserOptions.Stderr] stream is not
+// filtered.
 func goreleaserError(tail *tailBuffer, err error) error {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		return fmt.Errorf("goreleaser release: %w", err)
 	}
-	if tail.String() == "" {
+	text := stripANSI(tail.String())
+	if len(text) > stderrTailLimit {
+		text = text[len(text)-stderrTailLimit:]
+	}
+	if text == "" {
 		return fmt.Errorf("goreleaser release: exit %d", exitErr.ExitCode())
 	}
 
-	return fmt.Errorf("goreleaser release: exit %d: %s", exitErr.ExitCode(), tail.String())
+	return fmt.Errorf("goreleaser release: exit %d: %s", exitErr.ExitCode(), text)
+}
+
+// stripANSI removes CSI sequences and bare ESC bytes from s.
+//
+// GoReleaser writes color even when stderr is a pipe. The live
+// [GoReleaserOptions.Stderr] stream keeps those sequences so a human
+// can read the workflow log. The retained tail is stripped here so a
+// --json envelope does not embed raw escapes. This is not a general
+// terminal sanitizer: it handles the CSI form GoReleaser uses
+// (`ESC [ … final-byte`) and a lone ESC.
+func stripANSI(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != escapeByte {
+			b.WriteByte(s[i])
+			i++
+
+			continue
+		}
+		i++
+		if i >= len(s) {
+			break
+		}
+		if s[i] != csiIntroducer {
+			continue
+		}
+		i++
+		for i < len(s) {
+			c := s[i]
+			i++
+			if c >= csiFinalMin && c <= csiFinalMax {
+				break
+			}
+		}
+	}
+
+	return b.String()
 }
 
 // tailBuffer keeps the last limit bytes written to it.
