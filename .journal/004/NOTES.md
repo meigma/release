@@ -264,4 +264,87 @@ documented skeleton.
 Next: PR 10 moves the GoReleaser invocation into `goprof` and thins
 `go-pre-publish.yml`; PR 11 is the documentation pin that closes the program.
 
+## 2026-08-19 20:24 — PR 9 merged; PR 10 opened: `refactor(prepublish): run GoReleaser through release-cli`
+
+PR #16 was accepted and squash-merged as **`8a5e0a7`**. PR 10, the last
+behavioral slice, is open: https://github.com/meigma/release/pull/17 (branch
+`feat/release-cli-goreleaser`, commits `08be6e3` + `42f823d` + `ddc2b88`, CI green
+first run). All four reusable workflows are now thin shells; only PR 11's
+documentation pin remains.
+
+What landed:
+
+- `internal/profile/goprof/goreleaser.go` — `RunGoReleaser` invoking exactly
+  `release --clean --skip=publish`. No port, no adapter package, no `execx`; the
+  exec boundary lives in the profile package because the approved port list has
+  no GoReleaser port.
+- `internal/cli/stage.go` — `stage --profile go` now builds, then validates, then
+  writes the projection. `RELEASE_GORELEASER_PATH` is env-only. Both GoReleaser
+  streams go to the CLI's stderr so `--json` stdout stays one envelope.
+- `.github/workflows/go-pre-publish.yml` — PP-04's tool proof is its own step; the
+  staging step resolves `mise which goreleaser` and runs the CLI **under
+  `mise exec`**, because GoReleaser shells out to `go`, `syft`, and `cosign`.
+  That detail is the one thing a naive "pass the pinned binary path" port of this
+  step would have broken.
+- New docs required by the plan: `docs/tutorials/release-a-go-project.md` and
+  `docs/explanation/release-trust-boundaries.md`.
+
+Facts discovered while implementing:
+
+- **`goreleaser release` has no `--dist` flag.** Dist comes from configuration
+  only. So `GoReleaserOptions.Dist` is validated, never forwarded, and `--dist`
+  must be a basename because GoReleaser writes relative to the working directory.
+  The consumer obligation — `.goreleaser.yaml`'s dist must equal the workflow's
+  `--dist` — is documented, not cross-checked by the CLI.
+- **GoReleaser colorizes even into a pipe**, so the retained stderr tail carried
+  raw ANSI into the `--json` envelope error. Escapes are now stripped from the
+  tail only; the live stream keeps its color for the workflow log.
+- **A laptop cannot run the full build.** `gomod.proxy: true` resolves
+  `module@current-tag` through the module proxy, so an unpublished local tag fails
+  at proxying. The real invocation was still proven end to end: it cleaned dist,
+  printed `skipping announce and publish`, reported `release is disabled`, and
+  died at the proxy. The complete build stays a tag-time event, as the plan says.
+
+Three defects the review rounds caught, all fixed:
+
+1. **A fail-open older than this slice.** `runStage` never checked
+   `settings.err`, so a malformed `RELEASE_*` boolean was silently ignored. That
+   was harmless while `stage` only validated; once it builds, `RELEASE_JSON=yes`
+   would have run GoReleaser and could exit 0 against the documented exit-2
+   contract. Lesson: when a read-only command becomes a side-effecting one,
+   re-audit every error it used to be able to ignore.
+2. **A nil-seam panic.** The injected `RunGoReleaser` had no not-configured
+   guard, so deleting the `withDefaults` assignment made the binary panic, emit
+   no envelope, and exit 2 — colliding with the reserved usage code. Every other
+   injected collaborator already had that guard.
+3. **A regression introduced by one of my own fix instructions.** Collapsing the
+   dist rule onto `ParseRootName` (the right I1 call) quietly narrowed separator
+   rejection to `/` only, because `ParseRootName` used
+   `ContainsRune(raw, filepath.Separator)` while the ad-hoc CLI check had used
+   `ContainsAny(dist, "/\\")`. `--dist 'a\b'` went from a pre-build exit 2 to a
+   post-build exit 1, and would have inverted on Windows. Lesson: when you tell an
+   agent to delete a check in favor of an existing domain constructor, diff the two
+   rules first — this is the same class as "when a port replaces a regex, diff the
+   regex" from session 003.
+
+Judgment calls recorded for later, deliberately not acted on:
+
+- **The `execx` prohibition should probably be rescinded.** The bounded
+  stderr-tail plus `WaitDelay` plus `LookPath` exec helper now exists four times:
+  `cosign`, `melange`, `apko`, `goprof`. Conformance recommends amending the
+  architecture and extracting it. That is an architecture change, so it is out of
+  scope for a slice PR; it belongs in a follow-up with `ARCHITECTURE.md` updated.
+- **`Options.RunGoReleaser` is a function-shaped outbound seam, not just a test
+  hook.** Conformance calls it port 14 in substance. The plan's prohibition was on
+  an interface plus adapter package, which is what we avoided; the budget claim
+  should be read that way rather than as "no outbound seam at all".
+
+Caller-ceiling audit: no `permissions` block changed anywhere; all four caller
+jobs still match their callees in this repo, the example, and the docs skeleton.
+
+Next: PR 11 replaces the `FULL_SHA` placeholders and the stale
+`fb8c8098…` pin with the released slice-6 commit across README, docs, and the
+example. It depends on PR 10 being released and verified first, so the release
+that PR 10's merge produces is the gate.
+
 
