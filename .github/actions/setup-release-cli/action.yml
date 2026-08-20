@@ -162,6 +162,7 @@ runs:
         EXPECTED_PROTOCOL: 1
         GOCACHE: ${{ runner.temp }}/release-cli-go-cache/build
         GOMODCACHE: ${{ runner.temp }}/release-cli-go-cache/mod
+        MISE_EXEC_AUTO_INSTALL: 'false'
         MODE: ${{ steps.select.outputs.mode }}
         SOURCE_REPOSITORY: ${{ github.action_repository }}
         SOURCE_ROOT: ${{ steps.select.outputs.source-root }}
