@@ -14,3 +14,6 @@ Counted six production packages with private `os/exec` infrastructure: `apko`, `
 
 ## 2026-08-19 20:43 — Shared exec migration plan
 Created `PLAN.md` for an atomic clean cutover to `internal/execx`. The plan keeps tool-specific ports, arguments, secret handling, parsing, and errors in their current packages; centralizes only binary resolution, child process setup, output routing, bounded stderr capture, `WaitDelay`, and typed exit metadata; migrates all seven production call sites; deletes all six private helper copies; and verifies the boundary with direct process tests, targeted consumer suites, `root:check`, and the Linux suite. A focused architecture amendment will live in this session folder rather than rewriting session 002's closed architecture.
+
+## 2026-08-19 21:05 — Exec architecture amendment approved
+Added `ARCHITECTURE-AMENDMENT.md`. It records that revision 3's deferred extraction trigger has fired, defines `internal/execx` as local stdlib plumbing rather than a port or adapter, fixes the process policy at one attempt with a 4 KiB stderr tail and five-second `WaitDelay`, and leaves tool-specific validation, argv, secrets, parsing, errors, and retry policy in the existing consumers.
