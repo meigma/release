@@ -1,6 +1,6 @@
 # Shared subprocess execution plan
 
-Status: proposed
+Status: executed in PR [#18](https://github.com/meigma/release/pull/18), squash-merged as `0fd8483`
 
 Target PR: `refactor(exec): centralize subprocess execution`
 
