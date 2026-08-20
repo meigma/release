@@ -347,4 +347,35 @@ Next: PR 11 replaces the `FULL_SHA` placeholders and the stale
 example. It depends on PR 10 being released and verified first, so the release
 that PR 10's merge produces is the gate.
 
+## 2026-08-19 20:31 — Close
+
+Session 004 closed. Three PRs merged, which completes every behavioral slice of
+the eleven-PR program:
+
+- [#15](https://github.com/meigma/release/pull/15) -> `e235a28` — `image build`,
+  the `oci-build-inputs` projection, and ports 11 and 12.
+- [#16](https://github.com/meigma/release/pull/16) -> `8a5e0a7` — `image verify`,
+  exact-byte layout parsing, retiring the last shell verifier.
+- [#17](https://github.com/meigma/release/pull/17) -> `7197ca2` — the GoReleaser
+  invocation inside `stage --profile go`.
+
+`main` is at `7197ca2`, fast-forwarded in the primary checkout. All three
+implementation worktrees and their remote branches are removed; `git ls-files
+.journal` on `main` prints nothing. Twelve of thirteen ports exist; every reusable
+workflow is a thin shell.
+
+Hand-off state: **PR 11 is the only program work left**, and it is gated on a
+released and verified build of `7197ca2` — the user deferred it deliberately. The
+next tag is also the first CI run of the complete path, since the CLI now owns the
+GoReleaser build as well as both image commands; `publish-image: false` and
+`publish-release: false` remain the rollbacks. Release-please PR #9 is open with a
+now-stale `0.1.1` title.
+
+`SUMMARY.md` records the decisions, the three defects review caught, and the
+lessons. `TECH_NOTES.md` was rewritten for the new state: twelve ports, the
+build-command semantics of `stage`, the six binary-path variables, the `mise exec`
+requirement for GoReleaser's grandchildren, and the platform facts from this
+session (`ETXTBSY`, `archive/tar` typeflag normalization, no `--dist` flag,
+`gomod.proxy` blocking local builds, and the worktree `gh pr merge` gotcha).
+
 
