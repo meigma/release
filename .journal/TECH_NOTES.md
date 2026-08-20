@@ -2,31 +2,34 @@
 
 ## Current state
 
-- `main` is at `1ebb5ac`. The released artifact is `release-cli`; `v0.1.0` is the
-  only published release (six archives, six SBOMs, `checksums.txt` plus its
-  Sigstore bundle, and a GHCR image tagged `latest`, `0`, `0.1`, `0.1.0`).
-- The eleven-PR program in `.journal/002/PLAN.md` has **PRs 1 through 10 merged**.
-  Only **PR 11**, the documentation pin, remains, and it is gated on a released
-  and verified build of the current CLI.
-- **Every reusable workflow is a thin shell:** tag gate, checkout, mise install,
-  managed-tool-path proof, setup action, `release-cli` invocations, and artifact
-  transport. No workflow contains staging, build, verification, or publication
-  logic.
+- `main` is at `762bf40`. The current release is `v0.1.3` at
+  `0fc99489d31d400bc3f69d6636d60e7d3f3d0251`.
+- `v0.1.2` and `v0.1.3` both completed the full CLI-owned production path:
+  release asset build, OCI image build, OCI publication, and GitHub Release
+  publication.
+- A release contains six platform archives, six native Linux packages, twelve
+  SBOMs, `checksums.txt`, and its Sigstore bundle: 26 GitHub Release assets.
+  GHCR receives the signed multi-platform image and semantic channel tags.
+- Every reusable workflow remains a thin shell: tag gate, checkout, mise
+  install, managed-tool-path proof, setup action, `release-cli` invocations, and
+  artifact transport. No workflow contains staging, build, verification, or
+  publication logic.
 - Self-release jobs build `release-cli` from the exact reusable-workflow source
-  SHA and share exact-key Go build caches; consumer repositories still install
-  the checksum- and attestation-verified release. The executable is never cached.
-- **Nothing has been released since the CLI took over the build.** The next tag is
-  the first run of the complete path: GoReleaser inside `stage`, both image
-  commands, and the two publication workflows.
+  SHA with exact-key Go caches. External workflow consumers install the
+  checksum- and attestation-verified release.
+- Consumer workflows, signer identities, contracts, and examples all pin
+  `v0.1.3`. Direct users can install with mise's native GitHub backend or build
+  the tagged source with the repository Nix flake.
 
 ## Where the design lives
 
-- `.journal/002/ARCHITECTURE.md` (revision 3) is the approved architecture;
-  `.journal/002/PLAN.md` holds the eleven-PR plan, the **standing per-PR execution
-  method**, and the three spike results. Read both before continuing.
+- `.journal/002/ARCHITECTURE.md` (revision 3) is the approved CLI architecture;
+  `.journal/002/PLAN.md` contains the completed eleven-PR program and its spike
+  results.
 - `.journal/003/SUMMARY.md` covers slices 3-4b; `.journal/004/SUMMARY.md` covers
   slices 5a-6; `.journal/005/SUMMARY.md` covers shared subprocess execution and
-  cached source-build acquisition.
+  cached source-build acquisition; `.journal/006/SUMMARY.md` covers the first
+  production releases, native packages, mise, and Nix support.
 
 ## Binding contracts
 
@@ -62,6 +65,19 @@
   use the runner-provided workflow SHA for checkout, stamps, and exact OS,
   architecture, Go-version, and source-SHA `GOCACHE`/`GOMODCACHE` keys. `never`
   installs the stamped release and verifies its checksum and GitHub attestation.
+- **Native packages.** GoReleaser nFPM repackages each canonical Linux binary as
+  DEB, RPM, and APK without rebuilding it. The six packages and six package
+  SBOMs are first-class members of the signed, attested 26-file GitHub Release
+  contract. Native package repository publication and package-manager signing
+  remain out of scope.
+- **Direct mise installation.** `mise use github:meigma/release@<version>` uses
+  mise's built-in GitHub backend. `release-cli` has no shared mise registry
+  entry; a short name requires a consumer-local `[tool_alias]`.
+- **Nix distribution.** The root flake builds the exact source revision with
+  CGO disabled and exposes package, app, and check outputs for Darwin and Linux
+  on `arm64` and `amd64`. Nixpkgs 26.05 is pinned because it is the last release
+  supporting `x86_64-darwin`; Go 1.26.6 and the module closure use fixed hashes.
+  The Nix path does not install or attest the prebuilt GitHub Release archive.
 - **`actenv` is deliberately deferred.** Workflows read the `--json` envelope from
   stdout with a `$GITHUB_OUTPUT` heredoc and `jq`. Build the seam only when a
   command needs annotations or a job summary.
@@ -177,16 +193,21 @@
   `MEIGMA_RELEASE_APP_PRIVATE_KEY`, both scoped to selected repositories. Adopting
   organizations change only these plus the App installation.
 
-## Housekeeping debt
+## Open work and housekeeping
 
+- Homebrew is designed but unimplemented. Rehearse a generated cask in a
+  disposable tap, add cask-only tap CI, implement idempotent branch/PR
+  publication, integrate the optional producer lane, then codify
+  `init homebrew-tap`.
+- Scoop, MacPorts, and a generalized installer remain deferred.
+- A future Nixpkgs update must deliberately retain the final
+  `x86_64-darwin`-capable pin or drop that system.
+- The successful `v0.1.3` run emitted non-blocking annotations for the pinned
+  QEMU action's Node.js 20 runtime and artifact-metadata storage during OCI
+  publication.
 - Archived but undeletable without `delete_repo`: `meigma/release-selfref-spike`,
   `meigma/release-oras-spike`, `meigma/release-stamp-spike`, and
   `meigma/release-oci-remediation-e2e`. Also pending: the `spike/self-ref` branch,
   the `ghcr.io/meigma/release-oras-spike` package, and the dead
   `release-please--branches--main--components--release-mvp` branch.
-- Consumer docs and `examples/go-release/` still pin the pre-squash revision
-  `fb8c8098ff27968fb3070e928c00e925f38c698e` and carry `FULL_SHA` placeholders.
-  PR 11 replaces both.
-- Release-please PR #9 (`chore(main): release 0.1.1`) is open and must be refreshed
-  after the next intended release version is chosen.
 - Mockery's testify template emits no Godoc for generated expecter types.
