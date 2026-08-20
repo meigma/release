@@ -11,3 +11,6 @@ Plan: Receive the request, scope the work from current repository context, execu
 
 ## 2026-08-19 20:35 — Exec wrapper inventory
 Counted six production packages with private `os/exec` infrastructure: `apko`, `cosign`, `ghup`, `gitx`, `melange`, and `goprof`. They contain seven `exec.CommandContext` call sites because `cosign` has separate signing and verification paths. Each package owns its own `resolveBinary` and bounded `tailBuffer` implementation; the lone additional `exec.Command` site is test-only in `gitx`.
+
+## 2026-08-19 20:43 — Shared exec migration plan
+Created `PLAN.md` for an atomic clean cutover to `internal/execx`. The plan keeps tool-specific ports, arguments, secret handling, parsing, and errors in their current packages; centralizes only binary resolution, child process setup, output routing, bounded stderr capture, `WaitDelay`, and typed exit metadata; migrates all seven production call sites; deletes all six private helper copies; and verifies the boundary with direct process tests, targeted consumer suites, `root:check`, and the Linux suite. A focused architecture amendment will live in this session folder rather than rewriting session 002's closed architecture.
