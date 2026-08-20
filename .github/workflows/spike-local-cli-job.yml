@@ -1,0 +1,63 @@
+name: Probe cached local release-cli
+
+on:
+  workflow_call:
+    outputs:
+      acquisition:
+        description: CLI acquisition mode.
+        value: ${{ jobs.probe.outputs.acquisition }}
+      binary-sha256:
+        description: SHA-256 digest of the locally built CLI.
+        value: ${{ jobs.probe.outputs.binary-sha256 }}
+      cache-hit:
+        description: Whether the exact Go cache key was restored.
+        value: ${{ jobs.probe.outputs.cache-hit }}
+      reported-version:
+        description: Version reported by the locally built CLI.
+        value: ${{ jobs.probe.outputs.reported-version }}
+      reported-protocol:
+        description: Protocol reported by the locally built CLI.
+        value: ${{ jobs.probe.outputs.reported-protocol }}
+
+permissions: {}
+
+jobs:
+  probe:
+    name: Build and inspect local CLI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      acquisition: ${{ steps.setup.outputs.acquisition }}
+      binary-sha256: ${{ steps.setup.outputs.binary-sha256 }}
+      cache-hit: ${{ steps.setup.outputs.cache-hit }}
+      reported-version: ${{ steps.setup.outputs.reported-version }}
+      reported-protocol: ${{ steps.setup.outputs.reported-protocol }}
+    steps:
+      - name: Build local release-cli
+        id: setup
+        uses: $/.github/actions/setup-release-cli
+        with:
+          local-build: always
+
+      - name: Verify probe result
+        shell: bash
+        env:
+          ACQUISITION: ${{ steps.setup.outputs.acquisition }}
+          BINARY_SHA256: ${{ steps.setup.outputs.binary-sha256 }}
+          CLI_PATH: ${{ steps.setup.outputs.cli-path }}
+          REPORTED_PROTOCOL: ${{ steps.setup.outputs.reported-protocol }}
+          REPORTED_VERSION: ${{ steps.setup.outputs.reported-version }}
+        run: |
+          set -euo pipefail
+          test "${ACQUISITION}" = 'local-build'
+          test -x "${CLI_PATH}"
+          test "${REPORTED_VERSION}" = '0.1.0'
+          test "${REPORTED_PROTOCOL}" = '1'
+          [[ "${BINARY_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          printf 'acquisition=%s version=%s protocol=%s sha256=%s\n' \
+            "${ACQUISITION}" \
+            "${REPORTED_VERSION}" \
+            "${REPORTED_PROTOCOL}" \
+            "${BINARY_SHA256}"
