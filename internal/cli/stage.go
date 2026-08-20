@@ -2,10 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -42,14 +42,17 @@ func newStageCommand(options Options) *cobra.Command {
 
 // runStage builds the Go profile dist directory with GoReleaser, then verifies it.
 //
-// Missing or unknown --profile, a missing --dist, and a --dist that is
-// not a basename are [ErrUsage] and are raised before GoReleaser runs.
-// A GoReleaser failure is a command failure. GoReleaser progress and
-// diagnostics are written to stderr so --json stdout stays a single
-// envelope. Success writes the OCI build-input projection and, without
-// --json, writes nothing to stdout.
+// A malformed RELEASE_* boolean, a missing or unknown --profile, a missing
+// --dist, and a --dist that is not a basename are [ErrUsage] and are
+// raised before GoReleaser runs. A GoReleaser failure is a command
+// failure. GoReleaser progress and diagnostics are written to stderr so
+// --json stdout stays a single envelope. Success writes the OCI
+// build-input projection and, without --json, writes nothing to stdout.
 func runStage(ctx context.Context, options Options) error {
 	settings := *options.settings
+	if err := settings.err; err != nil {
+		return writeCommandResult(options, "stage", nil, UsageError(err))
+	}
 	if settings.Profile == "" {
 		return writeCommandResult(options, "stage", nil, UsageError(fmt.Errorf("--%s is required", flagProfile)))
 	}
@@ -65,15 +68,24 @@ func runStage(ctx context.Context, options Options) error {
 	if settings.Dist == "" {
 		return writeCommandResult(options, "stage", nil, UsageError(fmt.Errorf("--%s is required", flagDist)))
 	}
-	if err := requireDistBasename(settings.Dist); err != nil {
-		return writeCommandResult(options, "stage", nil, UsageError(err))
+	rootName, err := goprof.ParseRootName(settings.Dist)
+	if err != nil {
+		return writeCommandResult(options, "stage", nil, UsageError(fmt.Errorf(
+			"--%s %q is not a basename; GoReleaser writes its distribution directory relative to the working directory",
+			flagDist,
+			settings.Dist,
+		)))
+	}
+
+	if options.RunGoReleaser == nil {
+		return writeCommandResult(options, "stage", nil, errors.New("goreleaser runner is not configured"))
 	}
 
 	// GoReleaser is chatty; both streams go to the CLI stderr so --json
 	// stdout stays exactly one envelope.
-	err := options.RunGoReleaser(ctx, goprof.GoReleaserOptions{
+	err = options.RunGoReleaser(ctx, goprof.GoReleaserOptions{
 		Path:   lookupValue(options.LookupEnv, envGoreleaserPath),
-		Dist:   settings.Dist,
+		Dist:   rootName,
 		Stdout: options.Err,
 		Stderr: options.Err,
 	})
@@ -87,10 +99,6 @@ func runStage(ctx context.Context, options Options) error {
 	}
 	defer root.Close()
 
-	rootName, err := goprof.ParseRootName(settings.Dist)
-	if err != nil {
-		return writeCommandResult(options, "stage", nil, err)
-	}
 	report, err := stage.Stage(root.FS(), rootName)
 	if err != nil {
 		return writeCommandResult(options, "stage", nil, err)
@@ -114,23 +122,6 @@ func runStage(ctx context.Context, options Options) error {
 	}
 
 	return writeCommandResult(options, "stage", result, nil)
-}
-
-// requireDistBasename rejects a --dist that is not a working-directory basename.
-//
-// GoReleaser writes its distribution directory relative to the working
-// directory and has no --dist flag, so a nested, absolute, or "."/".."
-// value cannot be the directory it wrote.
-func requireDistBasename(dist string) error {
-	if dist == "." || dist == ".." || strings.ContainsAny(dist, `/\`) {
-		return fmt.Errorf(
-			"--%s %q is not a basename; GoReleaser writes its distribution directory relative to the working directory",
-			flagDist,
-			dist,
-		)
-	}
-
-	return nil
 }
 
 // writeImageInputs persists the OCI build-input projection under dist.

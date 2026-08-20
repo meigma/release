@@ -36,7 +36,7 @@ func TestStageWritesImageInputs(t *testing.T) {
 	assert.Empty(t, stdout)
 	assert.Empty(t, stderr)
 	assert.Empty(t, got.Path)
-	assert.Equal(t, stageDist, got.Dist)
+	assert.Equal(t, goprof.RootName(stageDist), got.Dist)
 	assert.Nil(t, got.Environ)
 	assert.NotNil(t, got.Stdout)
 	assert.NotNil(t, got.Stderr)
@@ -75,7 +75,7 @@ func TestStagePassesGoreleaserPathAndDist(t *testing.T) {
 	}, []string{"stage", "--profile", "go", "--dist", dist}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, stageGoreleaserPath, got.Path)
-	assert.Equal(t, stageDist, got.Dist)
+	assert.Equal(t, goprof.RootName(stageDist), got.Dist)
 	assert.Nil(t, got.Environ)
 }
 
@@ -150,6 +150,16 @@ func TestStageUsageErrorsDoNotBuild(t *testing.T) {
 			want: "not a basename",
 		},
 		{
+			name: "dot dist",
+			args: []string{"stage", "--profile", "go", "--dist", ".", "--json"},
+			want: "not a basename",
+		},
+		{
+			name: "backslash dist",
+			args: []string{"stage", "--profile", "go", "--dist", `a\b`, "--json"},
+			want: "not a basename",
+		},
+		{
 			name: "parent dist",
 			args: []string{"stage", "--profile", "go", "--dist", "..", "--json"},
 			want: "not a basename",
@@ -170,6 +180,53 @@ func TestStageUsageErrorsDoNotBuild(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStageMalformedBooleanEnvIsUsage(t *testing.T) {
+	t.Run("json yes", func(t *testing.T) {
+		stdout, stderr, err := execute(t, map[string]string{
+			"RELEASE_JSON": "yes",
+		}, []string{"stage", "--profile", "go", "--dist", stageDist}, cli.BuildInfo{})
+		require.Error(t, err)
+		assert.Equal(t, 2, cli.ExitCode(err))
+		assert.Empty(t, stdout)
+		assert.Empty(t, stderr)
+		assert.Contains(t, err.Error(), "RELEASE_JSON")
+	})
+	t.Run("dry-run maybe", func(t *testing.T) {
+		stdout, stderr, err := execute(t, map[string]string{
+			"RELEASE_DRY_RUN": "maybe",
+			"RELEASE_JSON":    "true",
+		}, []string{"stage", "--profile", "go", "--dist", stageDist}, cli.BuildInfo{})
+		require.Error(t, err)
+		assert.Equal(t, 2, cli.ExitCode(err))
+		assert.Empty(t, stderr)
+		assertFailureEnvelope(t, stdout, "RELEASE_DRY_RUN")
+	})
+}
+
+func TestStageDefaultGoReleaserSeam(t *testing.T) {
+	dist := chdirDist(t)
+	missing := filepath.Join(t.TempDir(), "missing-goreleaser")
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	command := cli.NewRootCommand(cli.Options{
+		Out: stdout,
+		Err: stderr,
+		LookupEnv: func(key string) (string, bool) {
+			if key == "RELEASE_GORELEASER_PATH" {
+				return missing, true
+			}
+			return "", false
+		},
+	})
+	command.SetArgs([]string{"stage", "--profile", "go", "--dist", dist, "--json"})
+	err := command.Execute()
+	require.Error(t, err)
+	assert.Equal(t, 1, cli.ExitCode(err))
+	assert.Contains(t, err.Error(), "resolve")
+	assert.Contains(t, err.Error(), missing)
+	assertFailureEnvelope(t, stdout.String(), "resolve")
 }
 
 func TestStageRoutesGoreleaserOutputToStderr(t *testing.T) {

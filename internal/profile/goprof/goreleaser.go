@@ -47,9 +47,10 @@ type GoReleaserOptions struct {
 	Path string
 
 	// Dist is the distribution directory GoReleaser is configured to
-	// write. It must be a basename: GoReleaser has no --dist flag, so
-	// the value is validated, not passed.
-	Dist string
+	// write. It must be a [RootName]: GoReleaser has no --dist flag, so
+	// the value is validated, not passed. The zero value is rejected
+	// before any process starts.
+	Dist RootName
 
 	// Environ is the child process environment. A nil value inherits
 	// [os.Environ]. The slice is used as-is and is never logged.
@@ -68,16 +69,19 @@ type GoReleaserOptions struct {
 // RunGoReleaser builds the release bundle with GoReleaser.
 //
 // It runs `goreleaser release --clean --skip=publish` as an explicit
-// argument slice through [exec.CommandContext]. The invocation does not
-// publish a GitHub release, does not generate a changelog, and does not
-// pass a --dist flag: GoReleaser has no such flag, so
-// [GoReleaserOptions.Dist] is validated as a basename and never
-// forwarded. A nil context or an invalid Dist is rejected before any
-// process starts. A nonzero exit returns an error that names the exit
-// code and a tail of stderr limited to [stderrTailLimit] bytes, with
-// ANSI color sequences stripped. Child stdout and stderr are copied to
-// the supplied writers unchanged, including color; nil writers discard
-// that stream. The error never includes the child environment.
+// argument slice through [exec.CommandContext]. `--clean` removes the
+// distribution directory first. `--skip=publish` is a command-line
+// boundary against publication that complements `release.disable: true`
+// in the consumer's configuration. Changelog and release-note behavior
+// also come from that configuration, not from this argv. GoReleaser has
+// no --dist flag, so [GoReleaserOptions.Dist] is validated as a
+// [RootName] and never forwarded. A nil context or a zero Dist is
+// rejected before any process starts. A nonzero exit returns an error
+// that names the exit code and a tail of stderr limited to
+// [stderrTailLimit] bytes, with ANSI color sequences stripped. Child
+// stdout and stderr are copied to the supplied writers unchanged,
+// including color; nil writers discard that stream. The error never
+// includes the child environment.
 func RunGoReleaser(ctx context.Context, options GoReleaserOptions) error {
 	if err := validateGoReleaser(ctx, options); err != nil {
 		return err
@@ -121,31 +125,19 @@ func RunGoReleaser(ctx context.Context, options GoReleaserOptions) error {
 	return nil
 }
 
-// validateGoReleaser rejects a nil context or an invalid Dist before
-// any process starts.
+// validateGoReleaser rejects a nil context or a zero Dist before any
+// process starts.
+//
+// Dist is a [RootName]; construction already rejected empty, ".",
+// "..", and path-separator values. The remaining check is the zero
+// value that a caller can still pass without going through
+// [ParseRootName].
 func validateGoReleaser(ctx context.Context, options GoReleaserOptions) error {
 	if ctx == nil {
 		return errors.New("context is nil")
 	}
-
-	return validateDist(options.Dist)
-}
-
-// validateDist rejects an empty Dist, a Dist that contains a path
-// separator, and the names "." and "..".
-//
-// GoReleaser has no --dist flag, so Dist is validated rather than
-// forwarded. A value GoReleaser cannot have written is a configuration
-// error.
-func validateDist(dist string) error {
-	if dist == "" {
+	if options.Dist == "" {
 		return errors.New("dist is empty")
-	}
-	if dist == "." || dist == ".." {
-		return fmt.Errorf("dist %q is not a basename", dist)
-	}
-	if strings.ContainsAny(dist, `/\`) {
-		return fmt.Errorf("dist %q contains a path separator", dist)
 	}
 
 	return nil

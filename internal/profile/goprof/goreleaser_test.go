@@ -14,9 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testDist is a valid distribution directory basename.
+var testDist = RootName("dist")
+
 const (
-	// testDist is a valid distribution directory basename.
-	testDist = "dist"
 	// startWait is how long cancelAfterStart waits for the fake to
 	// create its start marker. The budget is load-dependent, not a
 	// contract, and only bounds how a hung fixture is reported.
@@ -345,46 +346,6 @@ func TestRunGoReleaserRejectsBeforeStart(t *testing.T) {
 				Environ: environ,
 			},
 			want: "dist is empty",
-		},
-		{
-			name: "Dist with slash",
-			ctx:  context.Background(),
-			options: GoReleaserOptions{
-				Path:    path,
-				Dist:    "foo/bar",
-				Environ: environ,
-			},
-			want: "path separator",
-		},
-		{
-			name: "Dist with backslash",
-			ctx:  context.Background(),
-			options: GoReleaserOptions{
-				Path:    path,
-				Dist:    `foo\bar`,
-				Environ: environ,
-			},
-			want: "path separator",
-		},
-		{
-			name: "Dist is dot",
-			ctx:  context.Background(),
-			options: GoReleaserOptions{
-				Path:    path,
-				Dist:    ".",
-				Environ: environ,
-			},
-			want: `dist "." is not a basename`,
-		},
-		{
-			name: "Dist is dot-dot",
-			ctx:  context.Background(),
-			options: GoReleaserOptions{
-				Path:    path,
-				Dist:    "..",
-				Environ: environ,
-			},
-			want: `dist ".." is not a basename`,
 		},
 	}
 
