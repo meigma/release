@@ -129,7 +129,7 @@ runs:
           echo "source-root=${source_root}"
           echo "source-sha=${WORKFLOW_SHA}"
           echo "go-version=${go_version}"
-          echo "cache-key=release-cli-go-${RUNNER_OS}-${RUNNER_ARCH}-go${go_version}-${WORKFLOW_SHA}"
+          echo "cache-key=release-cli-go-v2-${RUNNER_OS}-${RUNNER_ARCH}-go${go_version}-${WORKFLOW_SHA}"
         } >>"${GITHUB_OUTPUT}"
 
     - name: Set up local Go toolchain
@@ -140,6 +140,7 @@ runs:
         working_directory: ${{ steps.select.outputs.source-root }}
         install_args: go
         cache: true
+        cache_key: mise-go-{{platform}}-{{version}}-{{install_args_hash}}-{{file_hash}}
         add_shims_to_path: false
         export_path: false
 
