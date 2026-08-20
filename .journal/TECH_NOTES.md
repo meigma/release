@@ -2,16 +2,19 @@
 
 ## Current state
 
-- `main` is at `7197ca2`. The released artifact is `release-cli`; `v0.1.0` is the
+- `main` is at `1ebb5ac`. The released artifact is `release-cli`; `v0.1.0` is the
   only published release (six archives, six SBOMs, `checksums.txt` plus its
   Sigstore bundle, and a GHCR image tagged `latest`, `0`, `0.1`, `0.1.0`).
 - The eleven-PR program in `.journal/002/PLAN.md` has **PRs 1 through 10 merged**.
   Only **PR 11**, the documentation pin, remains, and it is gated on a released
-  and verified build of `7197ca2`.
-- **Every reusable workflow is now a thin shell:** tag gate, checkout, mise
-  install, managed-tool-path proof, setup action, `release-cli` invocations,
-  artifact transport. No workflow contains staging, build, verification, or
-  publication logic. `go-oci-build.yml` shed 271 lines of shell in PRs 8 and 9.
+  and verified build of the current CLI.
+- **Every reusable workflow is a thin shell:** tag gate, checkout, mise install,
+  managed-tool-path proof, setup action, `release-cli` invocations, and artifact
+  transport. No workflow contains staging, build, verification, or publication
+  logic.
+- Self-release jobs build `release-cli` from the exact reusable-workflow source
+  SHA and share exact-key Go build caches; consumer repositories still install
+  the checksum- and attestation-verified release. The executable is never cached.
 - **Nothing has been released since the CLI took over the build.** The next tag is
   the first run of the complete path: GoReleaser inside `stage`, both image
   commands, and the two publication workflows.
@@ -22,13 +25,15 @@
   `.journal/002/PLAN.md` holds the eleven-PR plan, the **standing per-PR execution
   method**, and the three spike results. Read both before continuing.
 - `.journal/003/SUMMARY.md` covers slices 3-4b; `.journal/004/SUMMARY.md` covers
-  slices 5a-6 and the lessons from them.
+  slices 5a-6; `.journal/005/SUMMARY.md` covers shared subprocess execution and
+  cached source-build acquisition.
 
 ## Binding contracts
 
 - **One release unit.** Workflows, composite action, and CLI share one version and
-  one consumer pin. No `cli-version` input. `cli-path` is an unsupported escape
-  hatch: the installed path fails closed on a stamp mismatch, `cli-path` warns.
+  one consumer pin. Reusable workflows expose neither `cli-version` nor
+  `cli-path`. The setup action retains `cli-path` only as an unsupported direct
+  escape hatch: the caller owns the pairing and a stamp mismatch warns.
 - **Protocol stamp.** `cli.Protocol` is a Go source constant, not an ldflag.
   Release-please stamps only the version, through the annotated `generic`
   extra-file updater. `scripts/check-protocol-stamp.sh` guards both literals.
@@ -46,6 +51,17 @@
   `pubgh.BlobVerifier` (cosign), `pubgh.ReleaseReader`/`Publisher` (ghrel),
   `pubgh.AssetReplacer` (ghup), `pubgh.RefResolver` (gitx), `image.APKBuilder`
   (melange), `image.Composer` (apko). Unbuilt: `cli.Actions` (actenv).
+- **Subprocess execution.** `internal/execx` is the only production `os/exec`
+  boundary. It owns deferred binary lookup, process construction, output routing,
+  a 4 KiB stderr tail, five-second `WaitDelay`, and typed exit metadata. Tool
+  adapters retain argv, environment policy, secret handling, parsing, domain
+  errors, and retry decisions. `execx` itself runs exactly one attempt.
+- **CLI acquisition.** `setup-release-cli` accepts `local-build: auto|always|never`.
+  `auto` builds source only for a matching self-release; `always` still requires
+  the action and reusable workflow to come from the same repository. Source builds
+  use the runner-provided workflow SHA for checkout, stamps, and exact OS,
+  architecture, Go-version, and source-SHA `GOCACHE`/`GOMODCACHE` keys. `never`
+  installs the stamped release and verifies its checksum and GitHub attestation.
 - **`actenv` is deliberately deferred.** Workflows read the `--json` envelope from
   stdout with a `$GITHUB_OUTPUT` heredoc and `jq`. Build the seam only when a
   command needs annotations or a job summary.
@@ -171,9 +187,6 @@
 - Consumer docs and `examples/go-release/` still pin the pre-squash revision
   `fb8c8098ff27968fb3070e928c00e925f38c698e` and carry `FULL_SHA` placeholders.
   PR 11 replaces both.
-- Release-please PR #9 (`chore(main): release 0.1.1`) is open and its version is
-  stale now that PRs 8-10 added features.
-- The bounded stderr-tail exec helper is duplicated in `cosign`, `melange`, `apko`,
-  and `goprof`. The plan forbids `execx`; conformance recommends amending the
-  architecture and extracting it.
+- Release-please PR #9 (`chore(main): release 0.1.1`) is open and must be refreshed
+  after the next intended release version is chosen.
 - Mockery's testify template emits no Godoc for generated expecter types.
