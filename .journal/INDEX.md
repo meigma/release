@@ -7,3 +7,4 @@
 | 003 | 2026-08-19 | Release CLI slices 3 through 4b | complete | Merged PRs 3 through 7: tag planning, two-phase OCI publication, signed bundle verification, and GitHub Release publication, cutting both publication workflows over to the CLI. |
 | 004 | 2026-08-19 | Release CLI slices 5a through 6 | complete | Merged PRs 8 through 10: the staged OCI build projection, `image build` with the Melange and apko adapters, exact-byte `image verify`, and the GoReleaser invocation moving into the CLI, retiring every shell verifier. |
 | 005 | 2026-08-19 | Shared execution and cached source builds | complete | Merged PRs 18 and 19: centralized production subprocess execution, then replaced the release CLI artifact with exact-source builds backed by exact-key Go caches. |
+| 006 | 2026-08-20 | New work session | in-progress | Started a fresh journal session and awaited the substantive work request. |
