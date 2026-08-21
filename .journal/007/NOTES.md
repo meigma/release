@@ -22,3 +22,28 @@ Created `.journal/007/PLAN.md` from a focused planning-agent pass, then reviewed
 Decision: keep Scoop as a separate channel-specific `pubscoop`/`ghbucket` path, reuse only existing neutral seams, and explicitly avoid a generic package-manager publisher. Default to root-level bucket manifests, subject to a real disposable-bucket rehearsal before the permanent contract lands.
 Delivery order: disposable bucket rehearsal, secret-free managed bucket CI, fail-closed reviewed-PR publisher and CLI, producer/reusable-workflow integration, then deterministic bucket initializer and operator documentation.
 Checks: the planned `.goreleaser.yaml` `scoops` entry—including `ids`, explicit `url_template`, and `skip_upload: true`—validates with the pinned local GoReleaser. The pinned Scoop schema, bucket tests, GoReleaser source, and BucketTemplate revision all resolve. No production files changed.
+
+## 2026-08-21 12:17 — Scoop Slice 0 rehearsal complete
+Created the public disposable repository `meigma/scoop-bucket-rehearsal` and completed the plan's real Windows rehearsal without changing this repository's production files.
+
+Evidence:
+- GoReleaser-generated root manifests for public releases `v0.1.3` and `v0.1.5` were bound to the exact release checksums before publication to the rehearsal bucket.
+- Root-level discovery works with pinned Scoop commit `b588a06e41d920d2123ec70aee682bae14935939`: `scoop bucket list` reported one manifest and `scoop search meigma-release-cli` found it.
+- The pinned official Scoop bucket tests pass against the root manifest.
+- Rehearsal PR 1 proved install `v0.1.3`, execute `release-cli version`, update to `v0.1.5`, execute the updated binary, and uninstall with no application directory left behind. The required workflow passed before merge.
+- Rehearsal PR 2 replaced the x64 SHA-256 with zeros. The required workflow rejected it during forced update with `Hash check failed`, reporting the expected zero digest and the actual release digest. The intentionally failing PR was closed and its branch deleted.
+- Rehearsal PR 3 pointed the x64 manifest at a nonexistent release archive. The required workflow rejected it with HTTP 404 before installation. The intentionally failing PR was closed and its branch deleted.
+- GitHub's standard public `windows-11-arm` runner is available. Rehearsal PR 4 asserted an ARM64 host, installed the manifest's native ARM64 archive, executed `release-cli version`, and uninstalled it. Run `32517568028` passed both `manifests / Scoop manifest validation` and `manifests / Windows ARM64 lifecycle`.
+- `main` is protected with strict required checks for both workflow jobs, enforced for administrators, PR-only changes, linear history, conversation resolution, and no force pushes or deletion.
+
+Decisions and learned constraints:
+- Keep root-level manifests. Scoop discovers them correctly, and this avoids a needless `bucket/` directory.
+- Validate ARM64 immediately rather than carrying its generated entry untested.
+- Pin the Scoop checkout and official tests by full commit. Do not copy the moving `ScoopInstaller/GithubActions@main` template workflow.
+- Set `.gitattributes` to CRLF for text because Scoop's pinned syntax tests enforce Windows line endings.
+- Isolated Scoop bootstrap requires the `apps`, `buckets`, `cache`, `persist`, and `shims` directories plus an `apps/scoop/current` junction to the pinned checkout. Setting `LAST_UPDATE` prevents a network self-update from replacing the pinned core during lifecycle tests.
+- The official schema test discovers only Git-changed manifests when `CI` is true. The rehearsal clears `CI` for that invocation so workflow-only changes still validate every manifest instead of failing Pester 6's empty parameterized test.
+- Keep the permanent Slice 1 workflow behaviorally equivalent to the rehearsal workflow. The disposable repository is the executable contract.
+
+Remote state: rehearsal `main` is `2d13801`; PRs 1 and 4 merged, PRs 2 and 3 closed, and no rehearsal branch remains open.
+Next: implement Slice 1 managed bucket CI in the production repository, preserving the two required check names and the proven root-manifest lifecycle.
