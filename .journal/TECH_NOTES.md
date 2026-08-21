@@ -2,24 +2,22 @@
 
 ## Current state
 
-- `main` is at `762bf40`. The current release is `v0.1.3` at
-  `0fc99489d31d400bc3f69d6636d60e7d3f3d0251`.
-- `v0.1.2` and `v0.1.3` both completed the full CLI-owned production path:
-  release asset build, OCI image build, OCI publication, and GitHub Release
-  publication.
+- `main` is at `e657e15`. The current release is `v0.1.6` at
+  `4a7aa6e8a1e76db6cc639f1bae6973044922f9d3`.
+- `v0.1.6` completed release asset build, OCI publication, public GitHub
+  Release publication, and independent Homebrew and Scoop publication. The
+  protected package-repository PRs remain open for human review.
 - A release contains six platform archives, six native Linux packages, twelve
   SBOMs, `checksums.txt`, and its Sigstore bundle: 26 GitHub Release assets.
   GHCR receives the signed multi-platform image and semantic channel tags.
-- Every reusable workflow remains a thin shell: tag gate, checkout, mise
-  install, managed-tool-path proof, setup action, `release-cli` invocations, and
-  artifact transport. No workflow contains staging, build, verification, or
-  publication logic.
+- Reusable workflows own orchestration, artifact transport, credential
+  boundaries, and control-file isolation. Domain engines in `release-cli` own
+  repository reconciliation and every publication state transition.
 - Self-release jobs build `release-cli` from the exact reusable-workflow source
   SHA with exact-key Go caches. External workflow consumers install the
   checksum- and attestation-verified release.
-- Consumer workflows, signer identities, contracts, and examples all pin
-  `v0.1.3`. Direct users can install with mise's native GitHub backend or build
-  the tagged source with the repository Nix flake.
+- Direct users can install with mise's native GitHub backend or build the tagged
+  source with the repository Nix flake.
 
 ## Where the design lives
 
@@ -29,7 +27,8 @@
 - `.journal/003/SUMMARY.md` covers slices 3-4b; `.journal/004/SUMMARY.md` covers
   slices 5a-6; `.journal/005/SUMMARY.md` covers shared subprocess execution and
   cached source-build acquisition; `.journal/006/SUMMARY.md` covers the first
-  production releases, native packages, mise, and Nix support.
+  production releases, native packages, mise, and Nix support; and
+  `.journal/007/SUMMARY.md` covers Homebrew and Scoop delivery.
 
 ## Binding contracts
 
@@ -48,12 +47,31 @@
   command must check the settings resolver error before doing anything.
 - **Commands:** `stage --profile go`, `verify handoff`, `verify bundle`,
   `plan tags`, `publish oci prepare [--dry-run]`, `publish oci finalize --result -`,
-  `publish github [--no-undraft]`, `image build`, `image verify`, `version`.
-- **Ports.** Budget closed at 13; twelve exist. `pubgh.ArtifactMeta` (ghact),
-  `puboci.StateReader`/`ContentPusher`/`TagCommitter` (reg), `puboci.Signer` and
-  `pubgh.BlobVerifier` (cosign), `pubgh.ReleaseReader`/`Publisher` (ghrel),
-  `pubgh.AssetReplacer` (ghup), `pubgh.RefResolver` (gitx), `image.APKBuilder`
-  (melange), `image.Composer` (apko). Unbuilt: `cli.Actions` (actenv).
+  `publish github [--no-undraft]`, `publish homebrew`, `publish scoop`,
+  `init homebrew-tap`, `init scoop-bucket`, `image build`, `image verify`,
+  `version`.
+- **Ports.** Interfaces remain narrow and domain-owned. Homebrew adds
+  `pubbrew.RepositoryReader`/`RepositoryWriter` through `ghtap`; Scoop adds
+  `pubscoop.RepositoryReader`/`RepositoryWriter` through `ghbucket`. The
+  package channels share neutral GitHub value types and execution seams, not a
+  generalized package-manager publisher. `cli.Actions` (`actenv`) remains unbuilt.
+- **Package-manager controls.** GoReleaser renders the Homebrew cask and Scoop
+  manifest with `skip_upload: true`. They travel in the authoritative Actions
+  artifact but are removed from signed-bundle verification, attestations, and
+  public GitHub Release assets. Each publisher isolates and restores only its
+  own control file before invoking the CLI.
+- **Reviewed package publication.** Homebrew and Scoop run independently only
+  after the public GitHub Release succeeds. Each mints a short-lived Release App
+  token scoped to one destination repository, then converges a deterministic
+  branch and pull request without merging or enabling auto-merge.
+- **Bucket and tap CI.** Destination repositories call secret-free reusable
+  workflows pinned by full source commit. Homebrew validates casks on macOS and
+  Linux. Scoop keeps manifests at the root, enforces CRLF checkouts, and runs
+  pinned official schema and lifecycle checks on native Windows AMD64 and ARM64.
+- **Local initializers.** `init homebrew-tap` and `init scoop-bucket` write
+  deterministic scaffolds into absent or empty directories through an atomic
+  directory install. They perform no Git, GitHub, ruleset, App, or credential
+  operation; operator guides cover those boundaries.
 - **Subprocess execution.** `internal/execx` is the only production `os/exec`
   boundary. It owns deferred binary lookup, process construction, output routing,
   a 4 KiB stderr tail, five-second `WaitDelay`, and typed exit metadata. Tool
@@ -195,19 +213,16 @@
 
 ## Open work and housekeeping
 
-- Homebrew is designed but unimplemented. Rehearse a generated cask in a
-  disposable tap, add cask-only tap CI, implement idempotent branch/PR
-  publication, integrate the optional producer lane, then codify
-  `init homebrew-tap`.
-- Scoop, MacPorts, and a generalized installer remain deferred.
+- Homebrew and Scoop are implemented through protected repository pull
+  requests. Production `v0.1.6` opened `meigma/homebrew-tap` PR 7 and
+  `meigma/scoop-bucket` PR 2; both remain open intentionally for human review.
+- MacPorts and a generalized installer remain deferred.
 - A future Nixpkgs update must deliberately retain the final
   `x86_64-darwin`-capable pin or drop that system.
-- The successful `v0.1.3` run emitted non-blocking annotations for the pinned
-  QEMU action's Node.js 20 runtime and artifact-metadata storage during OCI
-  publication.
 - Archived but undeletable without `delete_repo`: `meigma/release-selfref-spike`,
-  `meigma/release-oras-spike`, `meigma/release-stamp-spike`, and
-  `meigma/release-oci-remediation-e2e`. Also pending: the `spike/self-ref` branch,
+  `meigma/release-oras-spike`, `meigma/release-stamp-spike`,
+  `meigma/release-oci-remediation-e2e`, and
+  `meigma/scoop-publisher-rehearsal`. Also pending: the `spike/self-ref` branch,
   the `ghcr.io/meigma/release-oras-spike` package, and the dead
   `release-please--branches--main--components--release-mvp` branch.
 - Mockery's testify template emits no Godoc for generated expecter types.

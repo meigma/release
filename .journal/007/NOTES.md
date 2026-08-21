@@ -116,3 +116,26 @@ Live release proof:
 Verification: `actionlint`, structural `yq` assertions, `goreleaser check`, repository format/lint/build/test/protocol/mock checks, generated control count and content checks, signed bundle verification paths, PR 39 CI/Nix/Kusari checks, the bucket token preflight, production release run, and both production package-manager pull requests passed. Production `main` is at `4a7aa6e`; the only untracked root path is the pre-existing user-owned `.wrangler/`.
 
 Next: Slice 4, deterministic `release-cli init scoop-bucket` scaffolding and operator documentation. Do not start it without an explicit request.
+
+## 2026-08-21 14:57 — Close
+
+Merged Slice 4 production PR 41 as `e657e1523cc5dd5551ad3b2cbc6b9fb1d4e64cfc`. `release-cli init scoop-bucket` now validates `owner/repository` and a full stamped source commit, writes exactly `.gitattributes`, `.github/dependabot.yml`, `.github/workflows/manifests.yml`, and `README.md` in lexical order, and atomically installs the deterministic scaffold into an absent or empty output directory. It performs no Git, GitHub, ruleset, App, or credential operation.
+
+The generated caller grants only `contents: read`, pins `scoop-bucket-ci.yml` by full source commit, watches root `*.json` manifests, and gives Windows checkouts the CRLF policy required by pinned Scoop tests. The operator guide covers repository creation, App installation scope, Actions credentials, GoReleaser `skip_upload`, reusable publisher wiring, branch protection, and first install/update/uninstall verification on Windows AMD64 and ARM64. It also documents that the manifest-only required check does not report on Dependabot workflow-only pull requests.
+
+Correction to the Slice 0 note: root-level manifests install and search correctly, but pinned Scoop's `scoop bucket list` implementation counts only files under a `bucket/` subdirectory and reports `Manifests 0` for the selected root layout. The managed validation workflow, search, and real lifecycle rehearsal are the health proof.
+
+Verification:
+- Byte-exact CLI tests cover repeated generation, one JSON envelope, absent and pre-created empty output, nonempty directories, regular files, symlinks, invalid repository values, unstamped builds, abbreviated commits, validation-before-mutation, and preservation of occupied user paths.
+- Existing Homebrew initializer tests pass after the shared atomic writer rename.
+- Repository format, isolated-cache lint, full Go suite, build, protocol stamp, PR CI, Nix flake, and Kusari Inspector pass.
+- A CLI stamped with source commit `4a7aa6e8a1e76db6cc639f1bae6973044922f9d3` generated a production-equivalent `meigma/scoop-bucket` scaffold. `actionlint` accepted the caller, GitHub confirmed the pinned reusable workflow exists at that commit, and Git resolved generated text with `eol: crlf`.
+- GitNexus reported low risk with no affected indexed process; its stale index omitted the new untracked source and test files, so LSP diagnostics, exact searches, the complete suite, focused QA, and the actual CLI smoke provided the authoritative coverage.
+
+Production references:
+- Release: https://github.com/meigma/release/releases/tag/v0.1.6
+- Release PRs: https://github.com/meigma/release/pull/36, https://github.com/meigma/release/pull/37, https://github.com/meigma/release/pull/39, https://github.com/meigma/release/pull/41
+- Scoop manifest review: https://github.com/meigma/scoop-bucket/pull/2
+- Homebrew cask review: https://github.com/meigma/homebrew-tap/pull/7
+
+Handoff: `release` main is clean except for the pre-existing user-owned `.wrangler/` and is synchronized at `e657e15`. Production package-manager PRs 2 and 7 remain open intentionally for human review with passing checks. Session 007 is complete; durable state is recorded in `.journal/TECH_NOTES.md` and `.journal/007/SUMMARY.md`.
