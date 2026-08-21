@@ -845,6 +845,31 @@ The publisher returns the deterministic branch, pull request URL, and reconciled
 
 The producer's `.goreleaser.yaml` must declare a `homebrew_casks` entry with `skip_upload: true`. The Go pre-publish workflow carries `dist/homebrew/Casks/*.rb` in the authoritative Actions artifact and formats generated casks with Homebrew before upload. It does not add the control file to the signed release payload set.
 
+### Optional native package signing
+
+`.github/workflows/go-pre-publish.yml` accepts `sign-native-packages`, which defaults to `false`. Enabling it requires four optional workflow secrets:
+
+- `rpm-signing-key`, containing a base64-encoded OpenPGP private key;
+- `rpm-signing-passphrase`;
+- `apk-signing-key`, containing a base64-encoded RSA private key; and
+- `apk-signing-passphrase`.
+
+The workflow validates the four secrets before setup. Immediately before staging, it decodes the private keys into owner-only files under `RUNNER_TEMP`. It passes these values to `release-cli stage`:
+
+| Value | Environment variable |
+| --- | --- |
+| Enable native package signing | `RELEASE_NATIVE_PACKAGE_SIGNING` |
+| RPM private-key file | `RELEASE_RPM_SIGNING_KEY_FILE` |
+| APK private-key file | `RELEASE_APK_SIGNING_KEY_FILE` |
+| RPM private-key passphrase | `NFPM_RELEASE_RPM_PASSPHRASE` |
+| APK private-key passphrase | `NFPM_RELEASE_APK_PASSPHRASE` |
+
+When `RELEASE_NATIVE_PACKAGE_SIGNING` parses as `true`, the stage command requires every other value before it starts GoReleaser. Each key path must identify a regular file whose group and other permission bits are clear. Missing values, malformed booleans, inaccessible files, and exposed file permissions are usage errors with exit code `2`. Error output names the invalid variable but does not include a passphrase.
+
+The producer's `.goreleaser.yaml` must use `release` as the `nfpms` ID and map the RPM and APK signature key files to `RELEASE_RPM_SIGNING_KEY_FILE` and `RELEASE_APK_SIGNING_KEY_FILE`. The fixed ID makes GoReleaser read the format-specific passphrases from `NFPM_RELEASE_RPM_PASSPHRASE` and `NFPM_RELEASE_APK_PASSPHRASE`. GoReleaser signs the native packages before it generates `checksums.txt`, so the signed package bytes are the bytes authenticated by the checksum manifest and its Cosign signature.
+
+After the stage step, the workflow removes the temporary key directory even when staging fails. When signing is disabled, the stage command removes ambient native-signing secrets from the GoReleaser environment and supplies empty key paths. Native package bytes remain unsigned and otherwise unchanged.
+
 ### Optional macOS signing and notarization
 
 `.github/workflows/go-pre-publish.yml` accepts `sign-and-notarize-macos`, which defaults to `false`. Enabling it requires all five optional workflow secrets:
