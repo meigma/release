@@ -69,3 +69,23 @@ Protection now requires only the stable strict check `manifests / Scoop manifest
 
 Verification: `actionlint` passes for the merged reusable workflow and caller. Production and rehearsal `main` trees are clean, no journal path is tracked on production `main`, the rehearsal has no open PR or branch beyond `main`, and the integrated implementation worktree was removed.
 Next: Slice 2, the fail-closed reviewed-PR Scoop publisher and CLI.
+
+## 2026-08-21 13:53 — Scoop Slice 2 publisher and CLI complete
+Merged production PR 37 as `66f43c7906b12a201b7530fad043ac9a77974076`.
+
+Implemented contract:
+- `internal/stage/pubscoop` is a separate fail-closed reconciliation engine. It owns only root `<manifest>.json` paths and deterministic `release/<manifest>/v<version>` branches, validates the generated JSON `version`, retries ambiguous writes after fresh reads, and returns only `created`, `open`, or `published`.
+- `internal/adapter/ghbucket` is a focused go-github adapter with generated reader and writer mocks. No generic package-manager publisher or Homebrew domain refactor was introduced.
+- `release-cli publish scoop --dist --bucket --manifest` reads only the nonempty regular `scoop/<manifest>.json` file beneath a confined distribution root, accepts the Release App token only through `RELEASE_APP_TOKEN`, uses the existing result envelope, and wires authenticated bucket reader and writer factories in the binary.
+- `.goreleaser.yaml` now declares the `meigma-release-cli` Scoop manifest for archive ID `release-cli`, repository `meigma/scoop-bucket`, the release asset URL template, and `skip_upload: true`.
+
+Verification:
+- Repository format, lint, build, tests, protocol stamp, and generated-mock checks passed. LSP reported no diagnostics in the new domain, adapter, CLI, options, or binary wiring.
+- `goreleaser check` accepted the configuration. A pinned GoReleaser 2.17.1 snapshot generated `dist/scoop/meigma-release-cli.json` with `64bit` and `arm64` Windows archives, `release-cli.exe`, the expected URL template, homepage, proprietary license, and description.
+- PR 37 checks passed: repository CI, Nix flake, and Kusari Inspector.
+- A public disposable repository rehearsal opened PR 1 and observed `created` on the first invocation and `open` on an exact rerun. Changing only the desired manifest content failed with `scoop publication conflict: publication branch release/meigma-release-cli/v0.1.5 has unexpected content`. After restoring the bytes and squash-merging the review, the next invocation returned `published`.
+- The disposable repository could not be deleted because the local GitHub token lacks `delete_repo`; it was archived instead. It is public at `meigma/scoop-publisher-rehearsal`, has no open pull request, and has only `main`.
+
+Impact note: GitNexus rated the additive `cli.Options` surface critical because it has 47 direct dependents and rated `newPublishCommand` high transitively. LSP found 87 `Options` references; the complete repository suite and live CLI rehearsal covered the changed command path.
+
+Next: Slice 3, deterministic `init scoop-bucket` scaffolding and operator documentation. Do not start it without an explicit request.
