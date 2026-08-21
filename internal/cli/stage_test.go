@@ -26,12 +26,7 @@ const (
 
 func TestStageWritesImageInputs(t *testing.T) {
 	dist := chdirDist(t)
-	stdout, stderr, got, err := executeStageSeam(
-		t,
-		nil,
-		[]string{"stage", "--profile", "go", "--dist", dist},
-		nil,
-	)
+	stdout, stderr, got, err := executeStageSeam(t, nil, []string{"stage", "--profile", "go", "--dist", dist})
 	require.NoError(t, err)
 	assert.Empty(t, stdout)
 	assert.Empty(t, stderr)
@@ -73,7 +68,7 @@ func TestStagePassesGoreleaserPathAndDist(t *testing.T) {
 	dist := chdirDist(t)
 	_, _, got, err := executeStageSeam(t, map[string]string{
 		"RELEASE_GORELEASER_PATH": stageGoreleaserPath,
-	}, []string{"stage", "--profile", "go", "--dist", dist}, nil)
+	}, []string{"stage", "--profile", "go", "--dist", dist})
 	require.NoError(t, err)
 	assert.Equal(t, stageGoreleaserPath, got.Path)
 	assert.Equal(t, goprof.RootName(stageDist), got.Dist)
@@ -84,12 +79,7 @@ func TestStagePassesGoreleaserPathAndDist(t *testing.T) {
 func TestStagePassesNativeSigningEnvironment(t *testing.T) {
 	dist := chdirDist(t)
 	env := validNativeSigningEnv(t)
-	stdout, stderr, got, err := executeStageSeam(
-		t,
-		env,
-		[]string{"stage", "--profile", "go", "--dist", dist},
-		nil,
-	)
+	stdout, stderr, got, err := executeStageSeam(t, env, []string{"stage", "--profile", "go", "--dist", dist})
 	require.NoError(t, err)
 	assert.Empty(t, stdout)
 	assert.Empty(t, stderr)
@@ -110,7 +100,7 @@ func TestStageDisabledNativeSigningRemovesSecrets(t *testing.T) {
 		"NFPM_RELEASE_RPM_PASSPHRASE":    "unused-rpm-secret",
 		"NFPM_RELEASE_APK_PASSPHRASE":    "unused-apk-secret",
 		"NATIVE_SIGNING_TEST_MARKER":     "preserved",
-	}, []string{"stage", "--profile", "go", "--dist", dist}, nil)
+	}, []string{"stage", "--profile", "go", "--dist", dist})
 	require.NoError(t, err)
 	assert.Contains(t, got.Environ, "RELEASE_RPM_SIGNING_KEY_FILE=")
 	assert.Contains(t, got.Environ, "RELEASE_APK_SIGNING_KEY_FILE=")

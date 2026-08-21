@@ -30,9 +30,9 @@ const (
 	// envAPKSigningKeyFile is the nFPM APK private-key path.
 	envAPKSigningKeyFile = "RELEASE_APK_SIGNING_KEY_FILE"
 	// envRPMPassphrase is the standard GoReleaser nFPM RPM passphrase.
-	envRPMPassphrase = "NFPM_RELEASE_RPM_PASSPHRASE"
+	envRPMPassphrase = "NFPM_RELEASE_RPM_PASSPHRASE" // #nosec G101 -- environment variable name, not a credential
 	// envAPKPassphrase is the standard GoReleaser nFPM APK passphrase.
-	envAPKPassphrase = "NFPM_RELEASE_APK_PASSPHRASE"
+	envAPKPassphrase = "NFPM_RELEASE_APK_PASSPHRASE" // #nosec G101 -- environment variable name, not a credential
 )
 
 // nativeSigning contains the validated nFPM signing environment.
