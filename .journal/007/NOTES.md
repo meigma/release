@@ -89,3 +89,30 @@ Verification:
 Impact note: GitNexus rated the additive `cli.Options` surface critical because it has 47 direct dependents and rated `newPublishCommand` high transitively. LSP found 87 `Options` references; the complete repository suite and live CLI rehearsal covered the changed command path.
 
 Next: Slice 3, deterministic `init scoop-bucket` scaffolding and operator documentation. Do not start it without an explicit request.
+
+## 2026-08-21 14:31 — Scoop Slice 3 production workflow complete
+Correction to the preceding Slice 2 note: the approved plan defines Slice 3 as the reusable Scoop publication workflow and production release integration. Deterministic `init scoop-bucket` scaffolding is Slice 4.
+
+Merged production PR 39 as `38fde4f8e33c9270a80a88fd0dc015821c50ccd9`.
+
+Implemented contract:
+- `.github/workflows/publish-scoop.yml` is default-off, requires no secret while disabled, validates configuration before external access, downloads and verifies the authoritative release artifact before minting a bucket-scoped Release App token, and exports `branch`, `pull-request-url`, and `state`.
+- The signed/public GitHub Release excludes both generated package-manager controls. The Homebrew publisher temporarily excludes the Scoop manifest during bundle verification; the Scoop publisher symmetrically excludes the Homebrew cask. Both restore their own control before invoking `release-cli`.
+- The production caller runs Homebrew and Scoop independently after the successful public GitHub Release. A failure in one package channel does not suppress the other.
+- The GitHub release and CLI contract references document the new workflow, default-off secret behavior, control-file boundaries, output states, and least-privilege App installation requirements.
+
+Production boundary:
+- Bootstrapped `meigma/scoop-bucket` through PR 1, merged as `a937a99f160c1a940297549fb4b26525b86ee17e`. It adds the proven CRLF checkout contract and a 15-line caller pinned to production workflow commit `38fde4f8e33c9270a80a88fd0dc015821c50ccd9`.
+- `main` now requires the strict `manifests / Scoop manifest validation` check, enforces pull requests and administrators, requires linear history and conversation resolution, and prohibits force pushes and deletions.
+- Temporary release PR 40 proved the initial App installation was missing, then passed on rerun `32527700235` after the `meigma-release` App was installed on `meigma/scoop-bucket`. The bucket-scoped token minted successfully and authenticated repository access. The temporary PR was closed without merge and its branch/worktree were deleted.
+
+Live release proof:
+- Release Please merged PR 38 as `4a7aa6e8a1e76db6cc639f1bae6973044922f9d3`, tagged `v0.1.6`, and production release run `32528167595` completed successfully.
+- The public release contains 26 signed/attested release assets and no Homebrew cask or Scoop manifest.
+- Scoop publication opened `meigma/scoop-bucket` PR 2. Its diff contains only `meigma-release-cli.json`; discovery, AMD64 validation, native ARM64 validation, the stable required aggregation check, and Kusari Inspector all pass.
+- The manifest's x64 digest `c6927491f35b75c4037ac57b9ca9141ae5cc4a1c263061c5ec9bc3333705dab3` and ARM64 digest `538d1d6d6c9ec685abddaa1050ae498c8b7a56a93e8ad778fada9f4b73f59b80` exactly match the corresponding public GitHub Release archive digests.
+- Independent Homebrew publication also succeeded and opened `meigma/homebrew-tap` PR 7.
+
+Verification: `actionlint`, structural `yq` assertions, `goreleaser check`, repository format/lint/build/test/protocol/mock checks, generated control count and content checks, signed bundle verification paths, PR 39 CI/Nix/Kusari checks, the bucket token preflight, production release run, and both production package-manager pull requests passed. Production `main` is at `4a7aa6e`; the only untracked root path is the pre-existing user-owned `.wrangler/`.
+
+Next: Slice 4, deterministic `release-cli init scoop-bucket` scaffolding and operator documentation. Do not start it without an explicit request.
