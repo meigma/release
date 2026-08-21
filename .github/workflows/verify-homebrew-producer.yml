@@ -50,8 +50,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist/homebrew/Casks
-          cat >dist/homebrew/Casks/meigma-release-cli.rb <<'RUBY'
-          cask "meigma-release-cli" do
+          cat >dist/homebrew/Casks/meigma-release-cli-rehearsal.rb <<'RUBY'
+          cask "meigma-release-cli-rehearsal" do
             version "0.1.3"
 
             on_macos do
@@ -97,7 +97,7 @@ jobs:
             ./release-cli publish homebrew \
               --dist dist \
               --tap meigma/homebrew-tap \
-              --cask meigma-release-cli \
+              --cask meigma-release-cli-rehearsal \
               --json
 
   notarize-success:
