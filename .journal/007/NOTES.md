@@ -47,3 +47,25 @@ Decisions and learned constraints:
 
 Remote state: rehearsal `main` is `2d13801`; PRs 1 and 4 merged, PRs 2 and 3 closed, and no rehearsal branch remains open.
 Next: implement Slice 1 managed bucket CI in the production repository, preserving the two required check names and the proven root-manifest lifecycle.
+
+## 2026-08-21 13:14 — Scoop Slice 1 managed bucket CI complete
+Merged production PR 36 as `d14fb9af3ad1e43cf9aafe9e69342187af0ef0f1`, adding `.github/workflows/scoop-bucket-ci.yml`.
+
+Implemented contract:
+- The reusable workflow accepts only `workflow_call`, has empty top-level permissions, and grants only `contents: read` to discovery and validation jobs.
+- Discovery validates pull-request base/head SHA shape, rejects root-manifest deletion or rename, accepts only safe added/modified root `*.json` names, and emits a compact manifest matrix.
+- Each manifest runs on `windows-2025`/AMD64 and `windows-11-arm`/ARM64. AMD64 runs the pinned official Scoop bucket tests against an isolated single-manifest bucket; both architectures install or force-update the candidate with pinned Scoop and then uninstall it.
+- Every action and source checkout uses a full commit SHA. The final `always()` aggregation job is named `Scoop manifest validation`.
+
+Managed-caller proof:
+- Rehearsal PR 5 replaced 195 lines of repository-owned workflow logic with a 15-line caller pinned to production commit `d14fb9af3ad1e43cf9aafe9e69342187af0ef0f1`. Run `32522006997` passed discovery, pinned AMD64 validation, native ARM64 validation, and `manifests / Scoop manifest validation`; PR 5 merged as rehearsal commit `f5f1c12`.
+- Rehearsal PR 9 set the x64 digest to zeros. Run `32522273015` reported `Hash check failed`; the stable aggregation check failed.
+- Rehearsal PR 7 used an absent x64 asset. Run `32522273388` reported HTTP 404; the stable aggregation check failed.
+- Rehearsal PR 6 added an unsupported top-level property. Run `32522272152` reported that `unexpected` is not defined and additional properties are forbidden; the stable aggregation check failed.
+- Rehearsal PR 8 deleted the root manifest. Run `32522272893` failed discovery with `Scoop bucket CI does not publish manifest deletions or renames`; validation skipped and the stable aggregation check failed.
+- All four intentional failure PRs were closed and their remote branches deleted.
+
+Protection now requires only the stable strict check `manifests / Scoop manifest validation`; PR enforcement, administrator enforcement, linear history, conversation resolution, and force-push/deletion prohibitions remain enabled. This corrects the Slice 0 note's temporary two-check protection: the managed workflow deliberately aggregates discovery and both architecture jobs behind one durable branch-protection context.
+
+Verification: `actionlint` passes for the merged reusable workflow and caller. Production and rehearsal `main` trees are clean, no journal path is tracked on production `main`, the rehearsal has no open PR or branch beyond `main`, and the integrated implementation worktree was removed.
+Next: Slice 2, the fail-closed reviewed-PR Scoop publisher and CLI.
