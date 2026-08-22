@@ -10,3 +10,4 @@
 | 006 | 2026-08-20 | Native packages, mise, and Nix support | complete | Published `v0.1.2` and `v0.1.3`, added native Linux packages and Nix support, documented mise installation, and advanced every consumer pin. |
 | 007 | 2026-08-21 | Scoop delivery and bucket initialization | complete | Rehearsed and shipped protected Scoop delivery, published `v0.1.6`, and added deterministic bucket initialization and operator guidance. |
 | 008 | 2026-08-21 | Native package repository delivery slices 1 through 4 | complete | Proved static APT/RPM/APK delivery, merged production slices 1 through 4, and published the package-repository CLI and workflow in `v0.1.7`. |
+| 009 | 2026-08-21 | New work session | in-progress | Started a new session; substantive work is awaiting definition. |
