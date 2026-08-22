@@ -2,12 +2,16 @@
 
 ## Current state
 
-- `main` is at `c1ee173`. The current release is `v0.1.7` at
-  `c1ee17342ec62b37fe728834975ce678f334ffd0`.
-- `v0.1.7` completed release asset build, OCI publication, public GitHub
-  Release publication, and independent Homebrew and Scoop publication. It
-  carries the package-repository CLI and reusable workflow as one versioned
-  unit; native signing and package-repository dispatch remain disabled.
+- `main` is at `ca0370f`. The current release is `v0.1.16` at
+  `583937edadfbae183e49f16df46b98e0b36807ba`; the consumer and producer
+  package-repository documentation merged afterward in `ca0370f`.
+- `v0.1.16` completed release asset build, OCI publication, public GitHub
+  Release publication, Homebrew and Scoop publication, native RPM/APK signing,
+  and automatic package-repository dispatch.
+- `meigma/pkgs` is the serialized production receiver. `pkgs.meigma.dev` serves
+  signed APT, RPM, and APK repositories containing `v0.1.9` and `v0.1.16`.
+  Production publication and unchanged replay passed exact public installs in
+  pinned Debian, Fedora, and Alpine clients.
 - A release contains six platform archives, six native Linux packages, twelve
   SBOMs, `checksums.txt`, and its Sigstore bundle: 26 GitHub Release assets.
   GHCR receives the signed multi-platform image and semantic channel tags.
@@ -29,9 +33,11 @@
   slices 5a-6; `.journal/005/SUMMARY.md` covers shared subprocess execution and
   cached source-build acquisition; `.journal/006/SUMMARY.md` covers the first
   production releases, native packages, mise, and Nix support;
-  `.journal/007/SUMMARY.md` covers Homebrew and Scoop delivery; and
+  `.journal/007/SUMMARY.md` covers Homebrew and Scoop delivery;
   `.journal/008/SUMMARY.md` covers native package repository research,
-  disposable proofs, and production slices 1 through 4.
+  disposable proofs, and production slices 1 through 4; and
+  `.journal/009/SUMMARY.md` covers production provisioning, hardening,
+  automatic dispatch, public installation, and cutover.
 
 ## Binding contracts
 
@@ -95,10 +101,12 @@
   producer signatures, and existing R2 object digests. It regenerates complete
   APT, RPM, and APK trees, verifies local installs, uploads immutable objects
   before signed mutable roots, then verifies public installs.
-- **Repository ownership.** The planned `meigma/pkgs` repository is the sole
-  serialized writer and holds aggregate signing and R2 credentials. Producers
-  dispatch only `{repository, tag}` after publication. Git stores reviewed
-  policy and versioned public keys, not packages or generated repository state.
+- **Repository ownership.** `meigma/pkgs` is the sole serialized writer and
+  holds aggregate signing and R2 credentials in its protected
+  `packages-production` environment. Producers mint a short-lived release App
+  token scoped to the receiver and dispatch only `{repository, tag}` after
+  public release. Git stores reviewed policy and versioned public keys, not
+  packages or generated repository state.
 - **Direct mise installation.** `mise use github:meigma/release@<version>` uses
   mise's built-in GitHub backend. `release-cli` has no shared mise registry
   entry; a short name requires a consumer-local `[tool_alias]`.
@@ -165,6 +173,17 @@
   `startup_failure` with no API-visible diagnostic, and PR CI cannot catch it when
   the caller only runs on tags. Audit this repo's `release.yml`, the copyable
   example, and the documented skeleton together.
+- **Linux package tools traverse and write across user boundaries.** Restore the
+  host owner after root-owned metadata generation, and make only the generated
+  public output tree traversable to unprivileged verification helpers. Keep
+  source and work roots private.
+- **Minimal Debian images need CA certificates before an HTTPS APT update.**
+  Bootstrap `ca-certificates` before replacing sources with
+  `https://pkgs.meigma.dev`; otherwise TLS failure masks repository behavior.
+- **A same-version replay can mask an incomplete historical-package
+  classifier.** Canonical RPM objects live under lowercase `packages/`. Prove
+  historical mirroring with a later release whose incoming assets cannot fill
+  an omitted old format.
 - **oras hands the content reader to `net/http`, which always closes a request
   body**, so a caller-owned `*os.File` gets closed twice; `fstest.MapFS` cannot
   catch it because its `Close` is idempotent. A streamed body has no `GetBody`, so
@@ -216,10 +235,11 @@
   GOFLAGS=-mod=mod golang:1.26 go test ./... -count=1` before trusting a green
   macOS suite.
 - **Package repository work:** generate signed packages with distinct producer
-  and aggregate keys, then exercise local APT, DNF, and APK installs. R2 proofs
-  must cover first publication, unchanged replay, immutable conflict,
+  and aggregate keys, then exercise local and public APT, DNF, and APK installs.
+  R2 proofs must cover first publication, unchanged replay, immutable conflict,
   interruption before roots, resume, GitHub/R2 byte identity, and cache
-  behavior. `.journal/008/SUMMARY.md` records the accepted evidence.
+  behavior. `.journal/008/SUMMARY.md` records the disposable evidence;
+  `.journal/009/SUMMARY.md` records the production proof.
 
 ## Credentials
 
@@ -237,9 +257,6 @@
   requests. Production `v0.1.6` and `v0.1.7` opened `meigma/homebrew-tap` PRs
   7/8 and `meigma/scoop-bucket` PRs 2/3; they remain open intentionally for
   human review.
-- Package repository slices 5 and 6 remain: initialize `meigma/pkgs` and
-  production R2/keys/domain, rehearse publication, then enable producer signing
-  and dispatch for the first signed production release and unchanged replay.
 - MacPorts and a generalized installer remain deferred.
 - A future Nixpkgs update must deliberately retain the final
   `x86_64-darwin`-capable pin or drop that system.
