@@ -76,3 +76,16 @@ all pass. The prior local and disposable R2 proofs cover real APT, DNF, and APK
 installation behavior. PR: https://github.com/meigma/release/pull/43.
 Next: Land PR 43, release the Action and CLI as one unit, then initialize
 `meigma/pkgs` against disposable infrastructure before production cutover.
+
+## 2026-08-21 17:26 — Package publication released
+PR 43 passed CI, Nix, and Kusari checks and was squash-merged as `8c30447`.
+The added Go dependencies changed the Nix module closure; CI exposed the stale
+`vendorHash`, which was corrected to the observed fixed-output hash and then
+verified locally with both flake-check commands and in CI.
+Release Please published `v0.1.7` from `c1ee173`. The production release run
+completed every asset, OCI, GitHub Release, Scoop, and Homebrew job. The
+released tag now carries the package-repository CLI and reusable workflow as
+one versioned unit.
+Next: Initialize `meigma/pkgs`, production keys, and R2 only when production
+provisioning is explicitly authorized; native signing and dispatch remain
+disabled.
