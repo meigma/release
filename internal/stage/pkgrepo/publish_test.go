@@ -191,11 +191,13 @@ func (f *publisherFixture) input() pkgrepo.PublishInput {
 		Config: pkgrepo.PublicationConfig{
 			Origin:     "https://pkgs.meigma.dev",
 			Repository: buildConfig(),
-			Sources: []pkgrepo.SourcePolicy{{
-				Repository:        "meigma/release",
-				ChecksumIdentity:  "https://github.com/shared/workflows/.github/workflows/go-pre-publish.yml@0123456789abcdef0123456789abcdef01234567",
-				AttestationSigner: "shared/workflows/.github/workflows/publish-github-release.yml",
-			}},
+			Sources: []pkgrepo.SourcePolicy{
+				{
+					Repository:        "meigma/release",
+					ChecksumIdentity:  "https://github.com/shared/workflows/.github/workflows/go-pre-publish.yml@0123456789abcdef0123456789abcdef01234567",
+					AttestationSigner: "shared/workflows/.github/workflows/publish-github-release.yml",
+				},
+			},
 		},
 		Request: pkgrepo.Request{Repository: "meigma/release", Tag: "v1.2.3"},
 		Keys:    f.keys,

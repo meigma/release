@@ -38,20 +38,7 @@ func TestVerifyBindsArtifactToExactGitHubProvenance(t *testing.T) {
 	err := fixture.verifier.Verify(context.Background(), fixture.request)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{
-		"attestation",
-		"verify",
-		fixture.request.Path,
-		"--repo",
-		"meigma/release",
-		"--signer-workflow",
-		"meigma/release/.github/workflows/publish-github-release.yml",
-		"--source-ref",
-		"refs/tags/v1.2.3",
-		"--source-digest",
-		"0123456789abcdef0123456789abcdef01234567",
-		"--deny-self-hosted-runners",
-	}, recordedArguments(t, fixture.record))
+	assert.Equal(t, fixture.expectedArguments(), recordedArguments(t, fixture.record))
 }
 
 func TestVerifyAcceptsCrossRepositorySigner(t *testing.T) {
@@ -64,20 +51,7 @@ func TestVerifyAcceptsCrossRepositorySigner(t *testing.T) {
 
 	err := fixture.verifier.Verify(context.Background(), fixture.request)
 	require.NoError(t, err)
-	assert.Equal(t, []string{
-		"attestation",
-		"verify",
-		fixture.request.Path,
-		"--repo",
-		"acme/app",
-		"--signer-workflow",
-		"meigma/release/.github/workflows/publish-github-release.yml",
-		"--source-ref",
-		"refs/tags/v1.2.3",
-		"--source-digest",
-		"0123456789abcdef0123456789abcdef01234567",
-		"--deny-self-hosted-runners",
-	}, recordedArguments(t, fixture.record))
+	assert.Equal(t, fixture.expectedArguments(), recordedArguments(t, fixture.record))
 }
 
 func TestVerifyRedactsTokenFromFailure(t *testing.T) {
@@ -176,6 +150,24 @@ func newVerifierFixture(t *testing.T) verifierFixture {
 			SignerWorkflow: "meigma/release/.github/workflows/publish-github-release.yml",
 		},
 		record: record,
+	}
+}
+
+// expectedArguments returns the exact gh argv for the fixture request.
+func (f verifierFixture) expectedArguments() []string {
+	return []string{
+		"attestation",
+		"verify",
+		f.request.Path,
+		"--repo",
+		string(f.request.Repository),
+		"--signer-workflow",
+		string(f.request.SignerWorkflow),
+		"--source-ref",
+		f.request.SourceRef,
+		"--source-digest",
+		f.request.SourceDigest,
+		"--deny-self-hosted-runners",
 	}
 }
 

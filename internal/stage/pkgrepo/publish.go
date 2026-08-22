@@ -118,8 +118,8 @@ func (p *Publisher) Publish(ctx context.Context, input PublishInput) (PublishRes
 		return PublishResult{}, err
 	}
 
-	if err := policy.Validate(); err != nil {
-		return PublishResult{}, err
+	if policyErr := policy.Validate(); policyErr != nil {
+		return PublishResult{}, policyErr
 	}
 	bundle, err := pubgh.VerifyBundle(ctx, releaseRoot.FS(), p.bundles, pubgh.TrustPolicy{
 		Identity: string(policy.ChecksumIdentity),
