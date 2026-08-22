@@ -10,7 +10,7 @@ package:
   homepage: https://github.com/meigma/release
   maintainer: Meigma <contact@meigma.dev>
   copyright:
-    - license: LicenseRef-Proprietary
+    - license: Apache-2.0 OR MIT
 
 vars:
   version: 0.0.0

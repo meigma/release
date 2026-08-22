@@ -54,6 +54,32 @@ func TestVerifyBindsArtifactToExactGitHubProvenance(t *testing.T) {
 	}, recordedArguments(t, fixture.record))
 }
 
+func TestVerifyAcceptsCrossRepositorySigner(t *testing.T) {
+	skipWindows(t)
+	t.Parallel()
+
+	fixture := newVerifierFixture(t)
+	fixture.request.Repository = "acme/app"
+	fixture.request.SignerWorkflow = "meigma/release/.github/workflows/publish-github-release.yml"
+
+	err := fixture.verifier.Verify(context.Background(), fixture.request)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"attestation",
+		"verify",
+		fixture.request.Path,
+		"--repo",
+		"acme/app",
+		"--signer-workflow",
+		"meigma/release/.github/workflows/publish-github-release.yml",
+		"--source-ref",
+		"refs/tags/v1.2.3",
+		"--source-digest",
+		"0123456789abcdef0123456789abcdef01234567",
+		"--deny-self-hosted-runners",
+	}, recordedArguments(t, fixture.record))
+}
+
 func TestVerifyRedactsTokenFromFailure(t *testing.T) {
 	skipWindows(t)
 	t.Parallel()
@@ -95,9 +121,9 @@ func TestVerifyRejectsUnboundRequestsBeforeExecution(t *testing.T) {
 			mutate:  func(request *pkgrepo.AttestationRequest) { request.SourceDigest = "deadbeef" },
 			wantErr: "full lowercase SHA",
 		},
-		{name: "other signer repository", mutate: func(request *pkgrepo.AttestationRequest) {
-			request.SignerWorkflow = "other/repo/.github/workflows/publish.yml"
-		}, wantErr: "does not belong"},
+		{name: "malformed signer workflow", mutate: func(request *pkgrepo.AttestationRequest) {
+			request.SignerWorkflow = ".github/workflows/publish.yml"
+		}, wantErr: "owner/repository/.github/workflows/<file>"},
 	}
 
 	for _, test := range tests {

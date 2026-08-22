@@ -52,7 +52,7 @@ nfpms:
     homepage: https://github.com/meigma/release
     maintainer: Meigma <contact@meigma.dev>
     description: Example Go command using the Meigma release workflows.
-    license: LicenseRef-Proprietary
+    license: Apache-2.0 OR MIT
     formats:
       - deb
       - rpm
