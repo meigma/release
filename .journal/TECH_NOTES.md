@@ -2,9 +2,10 @@
 
 ## Current state
 
-- `main` is at `ca0370f`. The current release is `v0.1.16` at
-  `583937edadfbae183e49f16df46b98e0b36807ba`; the consumer and producer
-  package-repository documentation merged afterward in `ca0370f`.
+- `main` is at `2d524ae`. The current release remains `v0.1.16` at
+  `583937edadfbae183e49f16df46b98e0b36807ba`; release PR 64 is open for
+  `v0.1.17`, the first released unit containing the cross-organization policy
+  cutover.
 - `v0.1.16` completed release asset build, OCI publication, public GitHub
   Release publication, Homebrew and Scoop publication, native RPM/APK signing,
   and automatic package-repository dispatch.
@@ -23,6 +24,10 @@
   checksum- and attestation-verified release.
 - Direct users can install with mise's native GitHub backend or build the tagged
   source with the repository Nix flake.
+- External organizations can use every supported publisher with adopter-owned
+  credentials and destinations. The maintained documentation is one tutorial,
+  six how-to guides, two references, and one architecture explanation; the
+  repository is licensed under Apache-2.0 OR MIT.
 
 ## Where the design lives
 
@@ -38,6 +43,9 @@
   disposable proofs, and production slices 1 through 4; and
   `.journal/009/SUMMARY.md` covers production provisioning, hardening,
   automatic dispatch, public installation, and cutover.
+- `.journal/010/SUMMARY.md` covers the cross-organization adoption review,
+  explicit shared-workflow signer policy, dual licensing, and documentation
+  consolidation.
 
 ## Binding contracts
 
@@ -101,6 +109,12 @@
   producer signatures, and existing R2 object digests. It regenerates complete
   APT, RPM, and APK trees, verifies local installs, uploads immutable objects
   before signed mutable roots, then verifies public installs.
+- **Package-repository signer policy.** Each producer declares
+  `checksum_identity` as the exact GitHub certificate identity including one
+  full workflow commit SHA, and `attestation_signer` as the exact reusable
+  publisher workflow without a revision. These signer repositories may differ
+  from the producer repository; the removed producer-relative fields are
+  rejected by strict YAML decoding.
 - **Repository ownership.** `meigma/pkgs` is the sole serialized writer and
   holds aggregate signing and R2 credentials in its protected
   `packages-production` environment. Producers mint a short-lived release App

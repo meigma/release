@@ -33,3 +33,7 @@ Documentation: Two technical-writer passes replaced the README plus 17 documents
 Implementation cleanup: Neutralized the example command output, deduplicated attestation argv expectations, and fixed the package publisher's lint shadow without changing behavior.
 Verification: `moon run root:check`, both root Nix CI checks, root and example GoReleaser validation, the example Go test, the example Nix check, LSP diagnostics, Markdown link/anchor/fence validation, YAML parsing, and reusable-workflow interface checks passed. GitHub CI, Nix, and Kusari checks all passed.
 Delivery: Commit `df62c00` completed the documentation refactor on `fix/cross-org-signer-policy`, following implementation commit `23131c4b`. PR `https://github.com/meigma/release/pull/63` is open against `main`.
+
+## 2026-08-22 08:29 — Close
+Merged `https://github.com/meigma/release/pull/63` with squash commit `2d524ae89785f3de26c240d32dda2b45b45be85b`. GitHub CI, Nix, and Kusari checks were green; local `main` was fast-forwarded and the `fix/cross-org-signer-policy` Worktrunk worktree was removed.
+Handoff: Release PR `https://github.com/meigma/release/pull/64` is open for `v0.1.17`. `meigma/pkgs` must migrate to `checksum_identity` and `attestation_signer` before adopting that release. Local `stash@{0}` preserves unexpected pre-merge `main` edits and was not reapplied over the merged implementation.

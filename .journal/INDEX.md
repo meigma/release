@@ -11,4 +11,4 @@
 | 007 | 2026-08-21 | Scoop delivery and bucket initialization | complete | Rehearsed and shipped protected Scoop delivery, published `v0.1.6`, and added deterministic bucket initialization and operator guidance. |
 | 008 | 2026-08-21 | Native package repository delivery slices 1 through 4 | complete | Proved static APT/RPM/APK delivery, merged production slices 1 through 4, and published the package-repository CLI and workflow in `v0.1.7`. |
 | 009 | 2026-08-21 | Native package repository production cutover | complete | Provisioned and cut over the signed production APT/RPM/APK repository, enabled automatic dispatch, and proved exact public installs plus unchanged replay. |
-| 010 | 2026-08-21 | New repository session | in-progress | Started a fresh journal session for the user's next repository task. |
+| 010 | 2026-08-22 | Cross-organization release adoption | complete | Removed cross-organization signer blockers, dual-licensed the repository, and replaced the documentation with a reusable adoption path for every supported publisher. |
