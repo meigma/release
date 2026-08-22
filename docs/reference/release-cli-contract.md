@@ -1,6 +1,6 @@
 # `release-cli` contract reference
 
-`release-cli` builds and validates Go release data, reports machine-readable results, builds and verifies OCI layouts from staged binaries, initializes cask-only Homebrew taps, opens protected tap and Scoop bucket pull requests, publishes verified GitHub Releases, and performs two-phase digest-addressed OCI publication. The [GitHub Release contract](github-release-contract.md) defines the workflow inputs, artifacts, and publication behavior that surround the CLI.
+`release-cli` builds and validates Go release data, reports machine-readable results, builds and verifies OCI layouts from staged binaries, initializes cask-only Homebrew taps, opens protected tap and Scoop bucket pull requests, publishes verified GitHub Releases, performs two-phase digest-addressed OCI publication, and converges verified DEB, RPM, and APK repository trees in Cloudflare R2. The [GitHub Release contract](github-release-contract.md) defines the workflow inputs, artifacts, and publication behavior that surround the CLI. The [package repository contract](package-repository-contract.md) defines native package ingestion and repository publication.
 
 ## Commands
 
@@ -13,6 +13,7 @@
 | `release-cli publish oci prepare --layout PATH [--image IMAGE] [--version VERSION] --digest DIGEST [--dry-run] [--plain-http] [--json]` | Validate and prepare a digest-addressed OCI image publication and recursive signature. |
 | `release-cli publish oci finalize --result - [--plain-http] [--json]` | Re-read registry state and apply verified OCI image tags after attestation. |
 | `release-cli publish github --dist PATH [--no-undraft] [--json]` | Reconcile a verified bundle with its matching GitHub Release and optionally publish the draft. |
+| `release-cli publish package-repository --repository OWNER/NAME --tag TAG --config PATH --keys DIR --cloudflare-account-id ID --r2-bucket BUCKET --gpg-home DIR --gpg-key-id FINGERPRINT --gpg-passphrase-file PATH --apk-signing-key PATH [--json]` | Verify one producer release, regenerate the complete static package repository, install locally, reconcile R2, and install from the public origin. |
 | `release-cli init homebrew-tap --tap OWNER/HOMEBREW-NAME --output DIR [--json]` | Write a cask-only tap scaffold into a new or empty local directory. |
 | `release-cli init scoop-bucket --bucket OWNER/REPOSITORY --output DIR [--json]` | Write a root-layout Scoop bucket scaffold into a new or empty local directory. |
 | `release-cli publish homebrew --dist PATH --tap OWNER/REPOSITORY --cask TOKEN [--json]` | Reconcile a generated cask through a protected Homebrew tap pull request. |
