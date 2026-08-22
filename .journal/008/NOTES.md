@@ -89,3 +89,16 @@ one versioned unit.
 Next: Initialize `meigma/pkgs`, production keys, and R2 only when production
 provisioning is explicitly authorized; native signing and dispatch remain
 disabled.
+
+## 2026-08-21 17:33 — Close
+Merged https://github.com/meigma/release/pull/43 as `8c30447` and the
+release-please PR https://github.com/meigma/release/pull/42 as `c1ee173`.
+Release `v0.1.7` and its production workflow completed successfully. Local
+`main` is fast-forwarded, the integrated `feat/package-repositories` worktree
+and local/remote branches are removed, and the generated Wrangler cache is
+deleted.
+Handoff: start a new session for slices 5 and 6. Create and rehearse
+`meigma/pkgs`, production R2, `pkgs.meigma.dev`, cache policy, protected
+credentials, and signing keys before enabling producer native signing or
+dispatch. Homebrew PRs 7/8 and Scoop PRs 2/3 remain independent human-review
+items.

@@ -2,11 +2,12 @@
 
 ## Current state
 
-- `main` is at `e657e15`. The current release is `v0.1.6` at
-  `4a7aa6e8a1e76db6cc639f1bae6973044922f9d3`.
-- `v0.1.6` completed release asset build, OCI publication, public GitHub
-  Release publication, and independent Homebrew and Scoop publication. The
-  protected package-repository PRs remain open for human review.
+- `main` is at `c1ee173`. The current release is `v0.1.7` at
+  `c1ee17342ec62b37fe728834975ce678f334ffd0`.
+- `v0.1.7` completed release asset build, OCI publication, public GitHub
+  Release publication, and independent Homebrew and Scoop publication. It
+  carries the package-repository CLI and reusable workflow as one versioned
+  unit; native signing and package-repository dispatch remain disabled.
 - A release contains six platform archives, six native Linux packages, twelve
   SBOMs, `checksums.txt`, and its Sigstore bundle: 26 GitHub Release assets.
   GHCR receives the signed multi-platform image and semantic channel tags.
@@ -27,8 +28,10 @@
 - `.journal/003/SUMMARY.md` covers slices 3-4b; `.journal/004/SUMMARY.md` covers
   slices 5a-6; `.journal/005/SUMMARY.md` covers shared subprocess execution and
   cached source-build acquisition; `.journal/006/SUMMARY.md` covers the first
-  production releases, native packages, mise, and Nix support; and
-  `.journal/007/SUMMARY.md` covers Homebrew and Scoop delivery.
+  production releases, native packages, mise, and Nix support;
+  `.journal/007/SUMMARY.md` covers Homebrew and Scoop delivery; and
+  `.journal/008/SUMMARY.md` covers native package repository research,
+  disposable proofs, and production slices 1 through 4.
 
 ## Binding contracts
 
@@ -48,8 +51,8 @@
 - **Commands:** `stage --profile go`, `verify handoff`, `verify bundle`,
   `plan tags`, `publish oci prepare [--dry-run]`, `publish oci finalize --result -`,
   `publish github [--no-undraft]`, `publish homebrew`, `publish scoop`,
-  `init homebrew-tap`, `init scoop-bucket`, `image build`, `image verify`,
-  `version`.
+  `publish package-repository`, `init homebrew-tap`, `init scoop-bucket`,
+  `image build`, `image verify`, `version`.
 - **Ports.** Interfaces remain narrow and domain-owned. Homebrew adds
   `pubbrew.RepositoryReader`/`RepositoryWriter` through `ghtap`; Scoop adds
   `pubscoop.RepositoryReader`/`RepositoryWriter` through `ghbucket`. The
@@ -84,10 +87,18 @@
   architecture, Go-version, and source-SHA `GOCACHE`/`GOMODCACHE` keys. `never`
   installs the stamped release and verifies its checksum and GitHub attestation.
 - **Native packages.** GoReleaser nFPM repackages each canonical Linux binary as
-  DEB, RPM, and APK without rebuilding it. The six packages and six package
-  SBOMs are first-class members of the signed, attested 26-file GitHub Release
-  contract. Native package repository publication and package-manager signing
-  remain out of scope.
+  DEB, RPM, and APK without rebuilding it. Opt-in producer RPM and APK signing
+  runs before checksums and attestations, so the release trust chain and native
+  package managers authenticate the same bytes.
+- **Static package repository.** `publish package-repository` verifies the exact
+  public GitHub Release, checksum identity, attestations, package metadata,
+  producer signatures, and existing R2 object digests. It regenerates complete
+  APT, RPM, and APK trees, verifies local installs, uploads immutable objects
+  before signed mutable roots, then verifies public installs.
+- **Repository ownership.** The planned `meigma/pkgs` repository is the sole
+  serialized writer and holds aggregate signing and R2 credentials. Producers
+  dispatch only `{repository, tag}` after publication. Git stores reviewed
+  policy and versioned public keys, not packages or generated repository state.
 - **Direct mise installation.** `mise use github:meigma/release@<version>` uses
   mise's built-in GitHub backend. `release-cli` has no shared mise registry
   entry; a short name requires a consumer-local `[tool_alias]`.
@@ -204,18 +215,31 @@
 - **Suite stability:** run `docker run --rm --cpus 4 -v <worktree>:/src -w /src -e
   GOFLAGS=-mod=mod golang:1.26 go test ./... -count=1` before trusting a green
   macOS suite.
+- **Package repository work:** generate signed packages with distinct producer
+  and aggregate keys, then exercise local APT, DNF, and APK installs. R2 proofs
+  must cover first publication, unchanged replay, immutable conflict,
+  interruption before roots, resume, GitHub/R2 byte identity, and cache
+  behavior. `.journal/008/SUMMARY.md` records the accepted evidence.
 
 ## Credentials
 
 - Release mutation uses org variable `MEIGMA_RELEASE_APP_CLIENT_ID` and org secret
   `MEIGMA_RELEASE_APP_PRIVATE_KEY`, both scoped to selected repositories. Adopting
   organizations change only these plus the App installation.
+- Package repository production requires a protected `packages-production`
+  environment in `meigma/pkgs` containing bucket-scoped R2 credentials and
+  aggregate OpenPGP/APK private keys. Producer signing keys remain in producer
+  release environments; producers never receive R2 or aggregate keys.
 
 ## Open work and housekeeping
 
 - Homebrew and Scoop are implemented through protected repository pull
-  requests. Production `v0.1.6` opened `meigma/homebrew-tap` PR 7 and
-  `meigma/scoop-bucket` PR 2; both remain open intentionally for human review.
+  requests. Production `v0.1.6` and `v0.1.7` opened `meigma/homebrew-tap` PRs
+  7/8 and `meigma/scoop-bucket` PRs 2/3; they remain open intentionally for
+  human review.
+- Package repository slices 5 and 6 remain: initialize `meigma/pkgs` and
+  production R2/keys/domain, rehearse publication, then enable producer signing
+  and dispatch for the first signed production release and unchanged replay.
 - MacPorts and a generalized installer remain deferred.
 - A future Nixpkgs update must deliberately retain the final
   `x86_64-darwin`-capable pin or drop that system.
