@@ -114,8 +114,18 @@ func TestSelectBinaries(t *testing.T) {
 				},
 			},
 			want: []goprof.CanonicalBinary{
-				canonical("amd64", "dist/release-cli_linux_amd64/release-cli", "release-cli_linux_amd64/release-cli", "release-cli"),
-				canonical("arm64", "dist/release-cli_linux_arm64/release-cli", "release-cli_linux_arm64/release-cli", "release-cli"),
+				canonical(
+					"amd64",
+					"dist/release-cli_linux_amd64/release-cli",
+					"release-cli_linux_amd64/release-cli",
+					"release-cli",
+				),
+				canonical(
+					"arm64",
+					"dist/release-cli_linux_arm64/release-cli",
+					"release-cli_linux_arm64/release-cli",
+					"release-cli",
+				),
 			},
 		},
 		{
@@ -237,10 +247,30 @@ func TestSelectBinaries(t *testing.T) {
 				linuxBinaryNamed("arm64", "dist/agent_linux_arm64/incus-agent", "incus-agent"),
 			},
 			want: []goprof.CanonicalBinary{
-				canonical("amd64", "dist/agent_linux_amd64/incus-agent", "agent_linux_amd64/incus-agent", "incus-agent"),
-				canonical("amd64", "dist/server_linux_amd64/incus-server", "server_linux_amd64/incus-server", "incus-server"),
-				canonical("arm64", "dist/agent_linux_arm64/incus-agent", "agent_linux_arm64/incus-agent", "incus-agent"),
-				canonical("arm64", "dist/server_linux_arm64/incus-server", "server_linux_arm64/incus-server", "incus-server"),
+				canonical(
+					"amd64",
+					"dist/agent_linux_amd64/incus-agent",
+					"agent_linux_amd64/incus-agent",
+					"incus-agent",
+				),
+				canonical(
+					"amd64",
+					"dist/server_linux_amd64/incus-server",
+					"server_linux_amd64/incus-server",
+					"incus-server",
+				),
+				canonical(
+					"arm64",
+					"dist/agent_linux_arm64/incus-agent",
+					"agent_linux_arm64/incus-agent",
+					"incus-agent",
+				),
+				canonical(
+					"arm64",
+					"dist/server_linux_arm64/incus-server",
+					"server_linux_arm64/incus-server",
+					"incus-server",
+				),
 			},
 		},
 	}

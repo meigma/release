@@ -221,7 +221,6 @@ func TestImageVerifyMissingValuesAreUsage(t *testing.T) {
 	}
 }
 
-
 func TestImageVerifyLayoutFailure(t *testing.T) {
 	t.Parallel()
 
